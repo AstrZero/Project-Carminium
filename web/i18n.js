@@ -141,6 +141,8 @@
       'nav.importPlaylists': '导入',
       'nav.settings': '设置',
       'nav.more': '更多',
+      'ios.group.localImport': 'iOS 本地曲库',
+      'ios.group.bottomNav': 'iPhone 底部导航栏',
 
       'title.minimize': '最小化',
       'title.maximize': '最大化/还原',
@@ -2995,6 +2997,8 @@
       'nav.importPlaylists': 'Import',
       'nav.settings': 'Settings',
       'nav.more': 'More',
+      'ios.group.localImport': 'iOS Local Library',
+      'ios.group.bottomNav': 'iPhone Bottom Navigation',
 
       'title.minimize': 'Minimize',
       'title.maximize': 'Maximize/Restore',
