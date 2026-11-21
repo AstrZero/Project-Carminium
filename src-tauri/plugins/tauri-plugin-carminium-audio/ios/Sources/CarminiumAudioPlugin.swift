@@ -56,7 +56,7 @@ private struct PickFilesResult: Encodable {
 }
 
 private struct TickEvent: Encodable {
-  let type = "tick"
+  var type: String = "tick"
   let positionMs: Double
   let durationMs: Double
   let status: String
@@ -65,24 +65,24 @@ private struct TickEvent: Encodable {
 }
 
 private struct StateEvent: Encodable {
-  let type = "state"
+  var type: String = "state"
   let status: String
   let trackId: String
 }
 
 private struct EndedEvent: Encodable {
-  let type = "ended"
+  var type: String = "ended"
   let trackId: String
 }
 
 private struct RemoteEvent: Encodable {
-  let type = "remote"
+  var type: String = "remote"
   let action: String
   let positionMs: Double?
 }
 
 private struct ErrorEvent: Encodable {
-  let type = "error"
+  var type: String = "error"
   let message: String
   let trackId: String
 }
@@ -234,10 +234,7 @@ class CarminiumAudioPlugin: Plugin {
   }
 
   #if os(iOS)
-  private func resolveTopViewController(_ invoke: Invoke) -> UIViewController? {
-    if let vc = invoke.presentingViewController() {
-      return vc
-    }
+  private func resolveTopViewController() -> UIViewController? {
     let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
     let window = scenes.flatMap { $0.windows }.first { $0.isKeyWindow }
       ?? scenes.flatMap { $0.windows }.first
@@ -252,7 +249,7 @@ class CarminiumAudioPlugin: Plugin {
   @objc public func openAirPlay(_ invoke: Invoke) {
     #if os(iOS)
     DispatchQueue.main.async {
-      guard let vc = self.resolveTopViewController(invoke) else {
+      guard let vc = self.resolveTopViewController() else {
         invoke.reject("No presenting view controller available")
         return
       }
@@ -286,7 +283,7 @@ class CarminiumAudioPlugin: Plugin {
     let args = try invoke.parseArgs(PickFilesArgs.self)
     #if os(iOS)
     DispatchQueue.main.async {
-      guard let vc = self.resolveTopViewController(invoke) else {
+      guard let vc = self.resolveTopViewController() else {
         invoke.resolve(PickFilesResult(copiedPaths: [], canceled: true))
         return
       }
