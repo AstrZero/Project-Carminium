@@ -1,0 +1,7 @@
+"$schema" = "schemas/schema.json"
+
+[default]
+description = "Default permissions for the Carminium iOS audio plugin"
+permissions = [
+  "allow-open-airplay"
+]
