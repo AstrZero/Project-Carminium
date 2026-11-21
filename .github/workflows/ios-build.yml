@@ -249,10 +249,18 @@ jobs:
 
           echo "Building scheme='${SCHEME}', configuration='${CONFIG}', sdk=iphoneos (unsigned)..."
 
+          if [ -f "$APPLE_DIR/project.yml" ]; then
+            echo "--- $APPLE_DIR/project.yml ---"
+            cat "$APPLE_DIR/project.yml"
+            echo "--- end project.yml ---"
+          fi
+
           mkdir -p dist-ios
           ARCHIVE_PATH="$(pwd)/dist-ios/Carminium.xcarchive"
-          rm -rf "$ARCHIVE_PATH"
+          BUILD_LOG="$(pwd)/dist-ios/xcodebuild.log"
+          rm -rf "$ARCHIVE_PATH" "$BUILD_LOG"
 
+          set +e
           xcodebuild \
             "${BUILD_TARGET[@]}" \
             -scheme "$SCHEME" \
@@ -268,7 +276,18 @@ jobs:
             DEVELOPMENT_TEAM="" \
             AD_HOC_CODE_SIGNING_ALLOWED=NO \
             ENABLE_BITCODE=NO \
-            archive
+            archive > "$BUILD_LOG" 2>&1
+          XC_STATUS=$?
+          set -e
+
+          if [ "$XC_STATUS" -ne 0 ]; then
+            echo "::error::xcodebuild archive failed with exit code ${XC_STATUS}. Filtered log (excluding export lines):"
+            grep -v '^    export ' "$BUILD_LOG" | tail -n 250 || true
+            exit "$XC_STATUS"
+          fi
+
+          echo "xcodebuild archive succeeded! Tail of build log:"
+          grep -v '^    export ' "$BUILD_LOG" | tail -n 60 || true
 
       - name: Package unsigned .ipa
         id: package
