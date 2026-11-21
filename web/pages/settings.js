@@ -954,6 +954,10 @@
       sections.push(_buildDebugSection());
     }
 
+    if (typeof window.__iosFilterSettingsSections === 'function') {
+      sections = window.__iosFilterSettingsSections(sections);
+    }
+
     return sections;
   }
 
@@ -1236,6 +1240,9 @@
     }
     if (section.id === 'system') {
       _bindMemoryInfo();
+    }
+    if (typeof window.__iosBindSettingsSection === 'function') {
+      window.__iosBindSettingsSection(page.container, section, _lastSettings);
     }
   }
 
@@ -1937,9 +1944,22 @@
     };
   }
 
+  var _IS_IOS_SETTINGS = window.__CARMINIUM_PLATFORM__ === 'ios';
   var NP_SECONDARY_MAX = 5;
-  var NP_SECONDARY_DEFAULT = ['shuffle', 'repeat', 'like', 'audio_mode'];
-  var NP_SECONDARY_CANDIDATES = [
+  var NP_SECONDARY_DEFAULT = _IS_IOS_SETTINGS
+    ? ['shuffle', 'repeat', 'like', 'airplay']
+    : ['shuffle', 'repeat', 'like', 'audio_mode'];
+  var NP_SECONDARY_CANDIDATES = _IS_IOS_SETTINGS ? [
+    { id: 'shuffle', icon: 'shuffle', labelKey: 'settings.npSecondary.shuffle' },
+    { id: 'repeat', icon: 'repeat', labelKey: 'settings.npSecondary.repeat' },
+    { id: 'like', icon: 'favorite', labelKey: 'settings.npSecondary.like' },
+    { id: 'airplay', icon: 'airplay', labelKey: 'settings.npSecondary.airplay' },
+    { id: 'seek_back_5', icon: 'replay', labelKey: 'settings.npSecondary.seekBack5', rotate: true },
+    { id: 'seek_fwd_5', icon: 'forward', labelKey: 'settings.npSecondary.seekFwd5' },
+    { id: 'seek_back_30', icon: 'replay', labelKey: 'settings.npSecondary.seekBack30', rotate: true },
+    { id: 'seek_fwd_30', icon: 'forward', labelKey: 'settings.npSecondary.seekFwd30' },
+    { id: 'mute', icon: 'volume_up', labelKey: 'settings.npSecondary.mute' },
+  ] : [
     { id: 'shuffle', icon: 'shuffle', labelKey: 'settings.npSecondary.shuffle' },
     { id: 'repeat', icon: 'repeat', labelKey: 'settings.npSecondary.repeat' },
     { id: 'like', icon: 'favorite', labelKey: 'settings.npSecondary.like' },

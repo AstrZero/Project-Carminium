@@ -2,11 +2,12 @@
 <html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Project Carminium</title>
   <meta name="description" content="Carminium — 本地音乐播放器">
 
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="ios.css">
 </head>
 <body>
   <div class="app-root" id="app-root">
@@ -92,6 +93,18 @@
           </span>
           <span class="nav-label" data-i18n="nav.playlists">歌单</span>
         </button>
+        <button class="nav-item nav-item-ios-only" data-page="settings" id="nav-settings" data-i18n-aria-label="nav.settings">
+          <span class="nav-indicator">
+            <span class="material-symbols-rounded">settings</span>
+          </span>
+          <span class="nav-label" data-i18n="nav.settings">设置</span>
+        </button>
+        <button class="nav-item nav-item-ios-only" id="nav-more" data-i18n-aria-label="nav.more" aria-haspopup="menu" aria-expanded="false">
+          <span class="nav-indicator">
+            <span class="material-symbols-rounded">more_horiz</span>
+          </span>
+          <span class="nav-label" data-i18n="nav.more">更多</span>
+        </button>
       </div>
 
       <div class="nav-drawer-handle" id="nav-drawer-handle" aria-hidden="true"></div>
@@ -153,6 +166,9 @@
             <span class="material-symbols-rounded">lyrics</span>
           </button>
         </div>
+        <button class="np-collapse-btn np-ios-queue-btn" id="btn-ios-queue" data-i18n-title="np.tab.queue" data-i18n-aria-label="np.tab.queue">
+          <span class="material-symbols-rounded">queue_music</span>
+        </button>
         <div class="split-button" id="np-split-btn">
           <button class="split-btn-main" id="btn-fullscreen" data-i18n-title="np.fullView">
             <span class="material-symbols-rounded">fullscreen</span>
@@ -524,5 +540,6 @@
   <script src="onboarding.js"></script>
 
   <script src="app.js"></script>
+  <script src="ios_adapter.js"></script>
 </body>
 </html>

@@ -118,8 +118,19 @@
     else el.textContent = text == null ? '' : text;
   }
 
+  const _IS_IOS = window.__CARMINIUM_PLATFORM__ === 'ios';
   const NP_SECONDARY_MAX = 5;
-  const NP_SECONDARY_DEFAULT = ['shuffle', 'repeat', 'like', 'audio_mode'];
+  const NP_SECONDARY_DEFAULT = _IS_IOS
+    ? ['shuffle', 'repeat', 'like', 'airplay']
+    : ['shuffle', 'repeat', 'like', 'audio_mode'];
+
+  function _formatMiniInfoSubtitle(track) {
+    var artist = (track && track.artist) || App.i18n.t('common.unknownArtist');
+    if (_IS_IOS && track && track.album) {
+      return artist + ' · ' + track.album;
+    }
+    return artist;
+  }
 
   const NP_SECONDARY_ACTIONS = {
     shuffle: {
@@ -141,6 +152,10 @@
       id: 'like', icon: 'favorite', titleKey: 'np.like', ariaKey: 'np.like',
       onClick: function () { App.backend.toggle_liked(); },
       isLiked: function () { return !!_isLiked; },
+    },
+    airplay: {
+      id: 'airplay', icon: 'airplay', titleKey: 'np.airplay', ariaKey: 'np.airplay',
+      onClick: function () { App.backend.open_airplay(); },
     },
     audio_mode: {
       id: 'audio_mode', variant: 'audio_mode',
@@ -302,7 +317,7 @@ let _lyricLineEls = null;
 
   function _beatUpdatePosition(ms) {
     var engine = App.audioEngine;
-    var now = engine && engine._ctx ? engine._ctx.currentTime : 0;
+    var now = (engine && engine._ctx) ? engine._ctx.currentTime : (performance.now() / 1000);
     if (!isSeeking && App.state.playbackState === 'playing' && _beatLocalBaseTime > 0) {
       var interpolated = _beatLocalBasePos + (now - _beatLocalBaseTime) * 1000;
       if (ms < interpolated && interpolated - ms < 200) {
@@ -315,7 +330,12 @@ let _lyricLineEls = null;
 
   function _beatGetPrecisePosition() {
     var engine = App.audioEngine;
-    if (!engine || !engine._ctx) return _beatLocalBasePos;
+    if (!engine || !engine._ctx) {
+      if (App.state.playbackState === 'playing' && _beatLocalBaseTime > 0) {
+        return _beatLocalBasePos + (performance.now() / 1000 - _beatLocalBaseTime) * 1000;
+      }
+      return _beatLocalBasePos;
+    }
     var rate = (engine._currentSource && engine._currentSource.playbackRate)
       ? engine._currentSource.playbackRate.value : 1.0;
     var elapsed = (engine._ctx.currentTime - _beatLocalBaseTime) * 1000 * rate;
@@ -1663,7 +1683,7 @@ let _lyricLineEls = null;
     } else {
       if (els.miniInfo) {
         _setTitle(els.miniInfoTitle, track.title || App.i18n.t('common.unknownTrack'));
-        els.miniInfoArtist.textContent = track.artist || App.i18n.t('common.unknownArtist');
+        els.miniInfoArtist.textContent = _formatMiniInfoSubtitle(track);
         if (track.has_cover) {
           if (!isSameTrack || els.miniInfoCoverImg.style.display === 'none') {
             els.miniInfoCoverImg.onerror = function() {
@@ -5098,7 +5118,7 @@ function _updateLyricsSourceBadge() {
       els.miniArtist.textContent = track.artist || App.i18n.t('common.unknownArtist');
       if (els.miniInfo) {
         _setTitle(els.miniInfoTitle, track.title || App.i18n.t('common.unknownTrack'));
-        els.miniInfoArtist.textContent = track.artist || App.i18n.t('common.unknownArtist');
+        els.miniInfoArtist.textContent = _formatMiniInfoSubtitle(track);
       }
     }
     np.updateAudioMode(App.state.isExclusive);

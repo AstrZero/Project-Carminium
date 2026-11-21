@@ -2,6 +2,12 @@
   'use strict';
 
   const isElectron = !!(window.__electronAPI && window.__electronAPI.isElectron);
+  const isTauri = !isElectron && !!(window.__TAURI__ || window.__TAURI_INTERNALS__);
+
+  if (isTauri) {
+    window.__CARMINIUM_PLATFORM__ = 'ios';
+    document.documentElement.dataset.platform = 'ios';
+  }
 
   const _handlers = {};
 
@@ -111,6 +117,63 @@
     });
 
     setupMediaSession();
+  } else if (isTauri) {
+    const tauriCore = (window.__TAURI__ && window.__TAURI__.core) || window.__TAURI_INTERNALS__;
+    const tauriInvoke = tauriCore && tauriCore.invoke ? tauriCore.invoke.bind(tauriCore) : null;
+    const tauriEvent = window.__TAURI__ && window.__TAURI__.event;
+
+    window.__coverBase = 'carminium://localhost';
+
+    window.pywebview = {
+      api: new Proxy({}, {
+        get: function (_target, method) {
+          if (typeof method !== 'string') return undefined;
+          return function () {
+            const args = Array.prototype.slice.call(arguments);
+            if (!tauriInvoke) return Promise.resolve(undefined);
+            return tauriInvoke('dispatch_bridge', { method: method, args: args });
+          };
+        }
+      })
+    };
+
+    if (tauriEvent && typeof tauriEvent.listen === 'function') {
+      tauriEvent.listen('bridge:event', function (evt) {
+        const data = evt && evt.payload;
+        if (data && data.event) {
+          window.__bridge.dispatch(data.event, data.payload);
+        }
+      });
+    }
+
+    // Zero-polling Tauri v2 Channel for native AVPlayer position ticks
+    if (tauriInvoke && tauriCore && typeof tauriCore.Channel === 'function') {
+      try {
+        const playbackChannel = new tauriCore.Channel();
+        playbackChannel.onmessage = function (msg) {
+          if (!msg || msg.type !== 'tick') return;
+          if (typeof msg.positionMs === 'number') {
+            window.__bridge.dispatch('position_changed', msg.positionMs);
+          }
+          if (typeof msg.durationMs === 'number' && msg.durationMs > 0) {
+            window.__bridge.dispatch('duration_changed', msg.durationMs);
+          }
+        };
+        tauriInvoke('register_playback_channel', { channel: playbackChannel }).catch(function (e) {
+          console.warn('[bridge] register_playback_channel failed:', e);
+        });
+      } catch (e) {
+        console.warn('[bridge] Channel init failed:', e);
+      }
+    }
+
+    window.__appFrozen = false;
+    document.addEventListener('visibilitychange', function () {
+      window.__appFrozen = !!document.hidden;
+      if (!document.hidden) {
+        _onAppForeground();
+      }
+    });
   }
 
   const App = window.App || {};
