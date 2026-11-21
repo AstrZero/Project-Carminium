@@ -287,10 +287,20 @@ jobs:
 
           echo "tauri ios build exited with status: ${TAURI_STATUS}"
 
-          APP_BUNDLE=$(find src-tauri/gen/apple -type d -name '*.app' ! -path '*Tests*' 2>/dev/null | sed -n '1p')
-          if [ -z "$APP_BUNDLE" ] || [ ! -d "$APP_BUNDLE" ]; then
-            APP_BUNDLE=$(find "$HOME/Library/Developer/Xcode/DerivedData" -type d -name '*.app' -path '*iphoneos*' ! -path '*Tests*' ! -path '*Index.noindex*' 2>/dev/null | sed -n '1p')
-          fi
+          # Locate a genuinely built .app bundle (must contain Info.plist with CFBundleExecutable;
+          # use `read -r` so paths with spaces like `Project Carminium.app` are preserved).
+          APP_BUNDLE=""
+          while IFS= read -r candidate; do
+            [ -n "$candidate" ] || continue
+            if [ -f "$candidate/Info.plist" ] && /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$candidate/Info.plist" >/dev/null 2>&1; then
+              APP_BUNDLE="$candidate"
+              break
+            fi
+          done < <(
+            find src-tauri/gen/apple -type d -name '*.app' ! -path '*Tests*' 2>/dev/null || true
+            find "$HOME/Library/Developer/Xcode/DerivedData" -type d -name '*.app' -path '*iphoneos*' ! -path '*Tests*' ! -path '*Index.noindex*' 2>/dev/null || true
+          )
+
           if [ -z "$APP_BUNDLE" ] || [ ! -d "$APP_BUNDLE" ]; then
             echo "::error::Unsigned .app bundle was not produced (tauri status=${TAURI_STATUS}). Filtered log:"
             grep -v '^    export ' "$BUILD_LOG" | tail -n 260 || true

@@ -717,9 +717,11 @@ impl LibraryDb {
             let conn = self.conn.lock().unwrap();
             let mut stmt =
                 conn.prepare("SELECT name FROM liked_artists ORDER BY liked_at DESC")?;
-            stmt.query_map([], |r| r.get(0))?
+            let names: Vec<String> = stmt
+                .query_map([], |r| r.get(0))?
                 .filter_map(|r| r.ok())
-                .collect()
+                .collect();
+            names
         };
         let all = self.get_artists(separators)?;
         let mut by_name: HashMap<String, Value> = all
@@ -788,9 +790,11 @@ impl LibraryDb {
             let mut stmt = conn.prepare(
                 "SELECT album, album_artist FROM liked_albums ORDER BY liked_at DESC",
             )?;
-            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            let out: Vec<(String, String)> = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .filter_map(|r| r.ok())
-                .collect()
+                .collect();
+            out
         };
         let all = self.get_albums()?;
         let mut by_key: HashMap<(String, String), Value> = all
