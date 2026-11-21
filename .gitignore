@@ -39,3 +39,9 @@ electron/bin/linux/carminium_audio.so
 electron/bin/darwin/carminium_audio.dylib
 _preview/
 docs/spatial-audio.md
+
+# Tauri v2 & iOS build artifacts
+src-tauri/target/
+src-tauri/gen/
+dist-ios/
+
