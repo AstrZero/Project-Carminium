@@ -1,0 +1,330 @@
+# Build unsigned iOS .ipa for Project Carminium (Tauri v2).
+# No Apple Developer certificate or provisioning profile is required.
+# The produced .ipa is uploaded as a GitHub Actions artifact for sideloading
+# (AltStore / SideStore / Sideloadly / TrollStore / LiveContainer, etc.).
+name: Build iOS (Unsigned IPA)
+
+on:
+  push:
+    branches:
+      - iOS
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  pull_request:
+    branches:
+      - iOS
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 'Xcode build configuration (release or debug)'
+        required: false
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios-unsigned:
+    name: Build Unsigned iOS IPA (arm64)
+    runs-on: macos-15
+    env:
+      RUST_BACKTRACE: '1'
+      CARGO_TERM_COLOR: always
+      # Placeholder team ID only for `tauri ios init --ci` so it never prompts
+      # interactively in CI; actual signing is completely disabled in xcodebuild.
+      APPLE_DEVELOPMENT_TEAM: '0000000000'
+      BUILD_CONFIG: ${{ github.event.inputs.configuration || 'release' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Tauri project structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f src-tauri/Cargo.toml ] || [ ! -f src-tauri/tauri.conf.json ]; then
+            echo "::error::未找到 src-tauri/Cargo.toml 或 src-tauri/tauri.conf.json。请先在 iOS 分支完成 Tauri v2 工程初始化（npx tauri init）后再触发构建。"
+            exit 1
+          fi
+
+      - name: Read app version
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f version.json ]; then
+            VERSION=$(node -p "require('./version.json').version" 2>/dev/null || jq -r '.version' version.json)
+          elif [ -f package.json ]; then
+            VERSION=$(jq -r '.version // "0.0.0"' package.json)
+          else
+            VERSION="0.0.0"
+          fi
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${VERSION} (${SHORT_SHA})"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Rust toolchain (iOS arm64)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Apple tooling (XcodeGen / CocoaPods)
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          if ! command -v pod >/dev/null 2>&1; then
+            brew install cocoapods
+          fi
+          xcodegen --version
+
+      - name: Install frontend dependencies & Tauri CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          elif [ -f package.json ]; then
+            npm install --no-audit --no-fund
+          fi
+
+          # Prefer local @tauri-apps/cli from node_modules; fall back to cargo-tauri v2.
+          if [ -x node_modules/.bin/tauri ]; then
+            echo "$(pwd)/node_modules/.bin" >> "$GITHUB_PATH"
+            ./node_modules/.bin/tauri --version
+          else
+            cargo install tauri-cli --version "^2" --locked
+            cargo tauri --version
+          fi
+
+      - name: Initialize Tauri iOS project (if not committed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d src-tauri/gen/apple ] || [ -z "$(find src-tauri/gen/apple -maxdepth 1 -name '*.xcodeproj' 2>/dev/null | sed -n '1p')" ]; then
+            if [ -x node_modules/.bin/tauri ]; then
+              npx tauri ios init --ci
+            else
+              cargo tauri ios init --ci
+            fi
+          else
+            echo "Found existing src-tauri/gen/apple Xcode project; skipping tauri ios init."
+          fi
+
+      - name: Generate iOS App Icons from build/icon.png
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f build/icon.png ]; then
+            if [ -x node_modules/.bin/tauri ]; then
+              npx tauri icon build/icon.png --ios-color '#111318' || true
+            else
+              cargo tauri icon build/icon.png --ios-color '#111318' || true
+            fi
+          fi
+
+      - name: Configure iOS Info.plist (Background Audio & LAN access)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLIST=$(find src-tauri/gen/apple -maxdepth 3 -name 'Info.plist' ! -path '*Tests*' | sed -n '1p')
+          if [ -z "$PLIST" ]; then
+            echo "::error::Info.plist not found under src-tauri/gen/apple"
+            exit 1
+          fi
+          echo "Patching Info.plist: $PLIST"
+
+          # 1. Background audio playback (AVAudioSession .playback + AirPlay)
+          if ! /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST" >/dev/null 2>&1; then
+            /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST"
+          fi
+          if ! /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST" | grep -qw "audio"; then
+            /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes: string audio" "$PLIST"
+          fi
+
+          # 2. Allow LAN HTTP connections for self-hosted Navidrome / Subsonic / WebDAV servers
+          if ! /usr/libexec/PlistBuddy -c "Print :NSAppTransportSecurity" "$PLIST" >/dev/null 2>&1; then
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST"
+          fi
+          /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity:NSAllowsArbitraryLoads" "$PLIST" >/dev/null 2>&1 || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity:NSAllowsLocalNetworking" "$PLIST" >/dev/null 2>&1 || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$PLIST"
+
+          # 3. Local network permission prompt (LAN NAS / Subsonic / WebDAV)
+          if ! /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$PLIST" >/dev/null 2>&1; then
+            /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 用于连接局域网内的 Navidrome / Subsonic / WebDAV 音乐服务器" "$PLIST"
+          fi
+
+          # 4. Expose Documents directory in iOS Files.app so users can copy local audio files directly
+          /usr/libexec/PlistBuddy -c "Delete :UIFileSharingEnabled" "$PLIST" >/dev/null 2>&1 || true
+          /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :LSSupportsOpeningDocumentsInPlace" "$PLIST" >/dev/null 2>&1 || true
+          /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PLIST"
+
+          # 5. Sync display version from version.json (CFBundleShortVersionString must be numeric X.Y.Z)
+          RAW_VER="${{ steps.meta.outputs.version }}"
+          SHORT_VER=$(echo "$RAW_VER" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+          if [[ "$SHORT_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${SHORT_VER}" "$PLIST" || true
+          fi
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$PLIST" || true
+
+          echo "Verified UIBackgroundModes:"
+          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST"
+
+      - name: Archive unsigned iOS app (xcodebuild)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pwd)/node_modules/.bin:$HOME/.cargo/bin:$PATH"
+
+          APPLE_DIR="src-tauri/gen/apple"
+          WORKSPACE=$(find "$APPLE_DIR" -maxdepth 1 -name '*.xcworkspace' 2>/dev/null | sed -n '1p')
+          PROJECT=$(find "$APPLE_DIR" -maxdepth 1 -name '*.xcodeproj' 2>/dev/null | sed -n '1p')
+
+          if [ -n "$WORKSPACE" ]; then
+            BUILD_TARGET=(-workspace "$WORKSPACE")
+            echo "Using workspace: $WORKSPACE"
+          elif [ -n "$PROJECT" ]; then
+            BUILD_TARGET=(-project "$PROJECT")
+            echo "Using project: $PROJECT"
+          else
+            echo "::error::No .xcworkspace or .xcodeproj found in $APPLE_DIR"
+            exit 1
+          fi
+
+          # Detect the iOS scheme and matching configuration name dynamically
+          # (Tauri v2 xcodegen creates lowercase `release` / `debug` configurations).
+          LIST_JSON=$(xcodebuild -list -json "${BUILD_TARGET[@]}")
+          echo "$LIST_JSON"
+
+          SCHEME=$(echo "$LIST_JSON" | jq -r '
+            (.workspace.schemes // .project.schemes // [])
+            | (map(select(test("_iOS$"))) + .)
+            | .[0] // empty
+          ')
+          if [ -z "$SCHEME" ]; then
+            echo "::error::Could not determine iOS scheme from Xcode project"
+            exit 1
+          fi
+
+          WANT_CFG="${BUILD_CONFIG}"
+          CONFIG=$(echo "$LIST_JSON" | jq -r --arg want "$WANT_CFG" '
+            (.project.configurations // ["release", "debug"])
+            | (map(select(ascii_downcase == ($want | ascii_downcase))) + [$want])
+            | .[0]
+          ')
+
+          echo "Building scheme='${SCHEME}', configuration='${CONFIG}', sdk=iphoneos (unsigned)..."
+
+          mkdir -p dist-ios
+          ARCHIVE_PATH="$(pwd)/dist-ios/Carminium.xcarchive"
+          rm -rf "$ARCHIVE_PATH"
+
+          xcodebuild \
+            "${BUILD_TARGET[@]}" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIG" \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=NO \
+            ENABLE_BITCODE=NO \
+            archive
+
+      - name: Package unsigned .ipa
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE_APPS="dist-ios/Carminium.xcarchive/Products/Applications"
+          APP_BUNDLE=$(find "$ARCHIVE_APPS" -maxdepth 1 -name '*.app' | sed -n '1p')
+          if [ -z "$APP_BUNDLE" ] || [ ! -d "$APP_BUNDLE" ]; then
+            echo "::error::Built .app bundle not found in $ARCHIVE_APPS"
+            ls -la "$ARCHIVE_APPS" || true
+            exit 1
+          fi
+
+          APP_NAME=$(basename "$APP_BUNDLE")
+          echo "Found .app bundle: $APP_BUNDLE"
+
+          # Verify ARM64 Mach-O executable and Info.plist
+          EXEC_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_BUNDLE/Info.plist")
+          EXEC_PATH="$APP_BUNDLE/$EXEC_NAME"
+          test -f "$EXEC_PATH" || { echo "::error::Executable missing: $EXEC_PATH"; exit 1; }
+          ARCHS=$(lipo -archs "$EXEC_PATH")
+          echo "Executable '$EXEC_NAME' architectures: $ARCHS"
+          [[ "$ARCHS" == *"arm64"* ]] || { echo "::error::Expected arm64 binary, got: $ARCHS"; exit 1; }
+
+          # Verify background audio mode survived the build
+          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$APP_BUNDLE/Info.plist" | grep -qw "audio"
+
+          # Strip any stray signature directories if present
+          rm -rf "$APP_BUNDLE/_CodeSignature"
+
+          STAGE_DIR="dist-ios/ipa-stage"
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR/Payload"
+          cp -R "$APP_BUNDLE" "$STAGE_DIR/Payload/"
+
+          VERSION="${{ steps.meta.outputs.version }}"
+          SHORT_SHA="${{ steps.meta.outputs.short_sha }}"
+          IPA_NAME="Carminium-${VERSION}-${SHORT_SHA}-ios-arm64-unsigned.ipa"
+          IPA_PATH="$(pwd)/dist-ios/${IPA_NAME}"
+
+          (cd "$STAGE_DIR" && zip -qry "$IPA_PATH" Payload)
+
+          IPA_SIZE=$(stat -f%z "$IPA_PATH")
+          echo "Created unsigned IPA: ${IPA_PATH} (${IPA_SIZE} bytes)"
+          test "$IPA_SIZE" -gt 1000000 || { echo "::error::IPA looks unexpectedly small (${IPA_SIZE} bytes)"; exit 1; }
+
+          # Sanity-check zip structure (sed avoids SIGPIPE under pipefail)
+          unzip -l "$IPA_PATH" | sed -n '1,30p'
+
+          echo "ipa_name=${IPA_NAME}" >> "$GITHUB_OUTPUT"
+          echo "ipa_path=dist-ios/${IPA_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-ipa-${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.short_sha }}
+          path: ${{ steps.package.outputs.ipa_path }}
+          retention-days: 14
