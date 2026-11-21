@@ -9,7 +9,7 @@ pub struct AppSettings {
 }
 
 fn default_settings_map() -> Map<String, Value> {
-    let val = json!({
+    const DEFAULTS_JSON: &str = r#"{
         "volume": 100,
         "shuffle": false,
         "repeat": "off",
@@ -72,8 +72,8 @@ fn default_settings_map() -> Map<String, Value> {
         "ios_nav_more_style": "popup",
         "show_quality": true,
         "shortcuts": {}
-    });
-    val.as_object().cloned().unwrap_or_default()
+    }"#;
+    serde_json::from_str::<Map<String, Value>>(DEFAULTS_JSON).unwrap_or_default()
 }
 
 impl AppSettings {

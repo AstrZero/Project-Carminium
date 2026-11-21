@@ -287,7 +287,10 @@ jobs:
 
           echo "tauri ios build exited with status: ${TAURI_STATUS}"
 
-          APP_BUNDLE=$(find src-tauri/gen/apple -type d -name '*.app' 2>/dev/null | sed -n '1p')
+          APP_BUNDLE=$(find src-tauri/gen/apple -type d -name '*.app' ! -path '*Tests*' 2>/dev/null | sed -n '1p')
+          if [ -z "$APP_BUNDLE" ] || [ ! -d "$APP_BUNDLE" ]; then
+            APP_BUNDLE=$(find "$HOME/Library/Developer/Xcode/DerivedData" -type d -name '*.app' -path '*iphoneos*' ! -path '*Tests*' ! -path '*Index.noindex*' 2>/dev/null | sed -n '1p')
+          fi
           if [ -z "$APP_BUNDLE" ] || [ ! -d "$APP_BUNDLE" ]; then
             echo "::error::Unsigned .app bundle was not produced (tauri status=${TAURI_STATUS}). Filtered log:"
             grep -v '^    export ' "$BUILD_LOG" | tail -n 260 || true
