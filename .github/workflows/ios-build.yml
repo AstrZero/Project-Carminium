@@ -154,6 +154,57 @@ jobs:
             fi
           fi
 
+      - name: Configure unsigned Xcode project (project.yml + xcodegen)
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPLE_DIR="src-tauri/gen/apple"
+          PROJ_YML="$APPLE_DIR/project.yml"
+          if [ ! -f "$PROJ_YML" ]; then
+            echo "::error::project.yml not found at $PROJ_YML"
+            exit 1
+          fi
+
+          # Disable code signing in the generated Xcode project so `tauri ios build`
+          # archives the arm64 .app without requiring certificates or provisioning profiles.
+          python3 - "$PROJ_YML" <<'PYEOF'
+          import re, sys
+
+          path = sys.argv[1]
+          text = open(path, "r", encoding="utf-8").read()
+
+          # Remove any existing signing keys to avoid duplicate YAML keys
+          for key in (
+              "CODE_SIGN_STYLE",
+              "CODE_SIGN_IDENTITY",
+              "CODE_SIGNING_ALLOWED",
+              "CODE_SIGNING_REQUIRED",
+              "AD_HOC_CODE_SIGNING_ALLOWED",
+              "DEVELOPMENT_TEAM",
+          ):
+              text = re.sub(rf"^[ \t]*{key}:.*\n", "", text, flags=re.MULTILINE)
+
+          # Inject unsigned settings right after ENABLE_BITCODE
+          inject = (
+              "        ENABLE_BITCODE: false\n"
+              '        CODE_SIGN_STYLE: "Manual"\n'
+              '        CODE_SIGN_IDENTITY: ""\n'
+              '        CODE_SIGNING_ALLOWED: "NO"\n'
+              '        CODE_SIGNING_REQUIRED: "NO"\n'
+              '        AD_HOC_CODE_SIGNING_ALLOWED: "NO"\n'
+              '        DEVELOPMENT_TEAM: ""\n'
+          )
+          if "ENABLE_BITCODE: false" in text:
+              text = text.replace("        ENABLE_BITCODE: false\n", inject, 1)
+          else:
+              raise SystemExit("Could not locate ENABLE_BITCODE anchor in project.yml")
+
+          open(path, "w", encoding="utf-8").write(text)
+          PYEOF
+
+          (cd "$APPLE_DIR" && xcodegen generate)
+          echo "Regenerated unsigned Xcode project via xcodegen."
+
       - name: Configure iOS Info.plist (Background Audio & LAN access)
         shell: bash
         run: |
@@ -204,101 +255,58 @@ jobs:
           echo "Verified UIBackgroundModes:"
           /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST"
 
-      - name: Archive unsigned iOS app (xcodebuild)
+      - name: Build & Archive unsigned iOS app (tauri ios build)
+        id: build_ios
         shell: bash
         run: |
           set -euo pipefail
           export PATH="$(pwd)/node_modules/.bin:$HOME/.cargo/bin:$PATH"
 
-          APPLE_DIR="src-tauri/gen/apple"
-          WORKSPACE=$(find "$APPLE_DIR" -maxdepth 1 -name '*.xcworkspace' 2>/dev/null | sed -n '1p')
-          PROJECT=$(find "$APPLE_DIR" -maxdepth 1 -name '*.xcodeproj' 2>/dev/null | sed -n '1p')
-
-          if [ -n "$WORKSPACE" ]; then
-            BUILD_TARGET=(-workspace "$WORKSPACE")
-            echo "Using workspace: $WORKSPACE"
-          elif [ -n "$PROJECT" ]; then
-            BUILD_TARGET=(-project "$PROJECT")
-            echo "Using project: $PROJECT"
-          else
-            echo "::error::No .xcworkspace or .xcodeproj found in $APPLE_DIR"
-            exit 1
-          fi
-
-          # Detect the iOS scheme and matching configuration name dynamically
-          # (Tauri v2 xcodegen creates lowercase `release` / `debug` configurations).
-          LIST_JSON=$(xcodebuild -list -json "${BUILD_TARGET[@]}")
-          echo "$LIST_JSON"
-
-          SCHEME=$(echo "$LIST_JSON" | jq -r '
-            (.workspace.schemes // .project.schemes // [])
-            | (map(select(test("_iOS$"))) + .)
-            | .[0] // empty
-          ')
-          if [ -z "$SCHEME" ]; then
-            echo "::error::Could not determine iOS scheme from Xcode project"
-            exit 1
-          fi
-
-          WANT_CFG="${BUILD_CONFIG}"
-          CONFIG=$(echo "$LIST_JSON" | jq -r --arg want "$WANT_CFG" '
-            (.project.configurations // ["release", "debug"])
-            | (map(select(ascii_downcase == ($want | ascii_downcase))) + [$want])
-            | .[0]
-          ')
-
-          echo "Building scheme='${SCHEME}', configuration='${CONFIG}', sdk=iphoneos (unsigned)..."
-
-          if [ -f "$APPLE_DIR/project.yml" ]; then
-            echo "--- $APPLE_DIR/project.yml ---"
-            cat "$APPLE_DIR/project.yml"
-            echo "--- end project.yml ---"
-          fi
-
           mkdir -p dist-ios
-          ARCHIVE_PATH="$(pwd)/dist-ios/Carminium.xcarchive"
-          BUILD_LOG="$(pwd)/dist-ios/xcodebuild.log"
-          rm -rf "$ARCHIVE_PATH" "$BUILD_LOG"
+          BUILD_LOG="$(pwd)/dist-ios/tauri-ios-build.log"
+          rm -f "$BUILD_LOG"
 
+          BUILD_ARGS=(ios build --ci --target aarch64)
+          if [ "${BUILD_CONFIG}" = "debug" ]; then
+            BUILD_ARGS+=(--debug)
+          fi
+
+          echo "Running: npx tauri ${BUILD_ARGS[*]}"
+          # `tauri ios build` launches the Tauri CLI options server (cli-options-server.json)
+          # required by Xcode's `Build Rust Code` script, compiles Rust + Swift plugin,
+          # and builds the arm64 .xcarchive. Its final `-exportArchive` step may exit non-zero
+          # when unsigned, so we check for the built `.app` inside the `.xcarchive` below.
           set +e
-          xcodebuild \
-            "${BUILD_TARGET[@]}" \
-            -scheme "$SCHEME" \
-            -configuration "$CONFIG" \
-            -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            -archivePath "$ARCHIVE_PATH" \
-            ARCHS=arm64 \
-            ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            DEVELOPMENT_TEAM="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=NO \
-            ENABLE_BITCODE=NO \
-            archive > "$BUILD_LOG" 2>&1
-          XC_STATUS=$?
+          if [ -x node_modules/.bin/tauri ]; then
+            npx tauri "${BUILD_ARGS[@]}" > "$BUILD_LOG" 2>&1
+          else
+            cargo tauri "${BUILD_ARGS[@]}" > "$BUILD_LOG" 2>&1
+          fi
+          TAURI_STATUS=$?
           set -e
 
-          if [ "$XC_STATUS" -ne 0 ]; then
-            echo "::error::xcodebuild archive failed with exit code ${XC_STATUS}. Filtered log (excluding export lines):"
-            grep -v '^    export ' "$BUILD_LOG" | tail -n 250 || true
-            exit "$XC_STATUS"
+          echo "tauri ios build exited with status: ${TAURI_STATUS}"
+
+          APP_BUNDLE=$(find src-tauri/gen/apple -type d -name '*.app' 2>/dev/null | sed -n '1p')
+          if [ -z "$APP_BUNDLE" ] || [ ! -d "$APP_BUNDLE" ]; then
+            echo "::error::Unsigned .app bundle was not produced (tauri status=${TAURI_STATUS}). Filtered log:"
+            grep -v '^    export ' "$BUILD_LOG" | tail -n 260 || true
+            exit 1
           fi
 
-          echo "xcodebuild archive succeeded! Tail of build log:"
+          echo "Found built unsigned .app bundle: ${APP_BUNDLE}"
+          echo "Tail of build log:"
           grep -v '^    export ' "$BUILD_LOG" | tail -n 60 || true
+          echo "app_bundle=${APP_BUNDLE}" >> "$GITHUB_OUTPUT"
 
       - name: Package unsigned .ipa
         id: package
         shell: bash
         run: |
           set -euo pipefail
-          ARCHIVE_APPS="dist-ios/Carminium.xcarchive/Products/Applications"
-          APP_BUNDLE=$(find "$ARCHIVE_APPS" -maxdepth 1 -name '*.app' | sed -n '1p')
+          APP_BUNDLE="${{ steps.build_ios.outputs.app_bundle }}"
           if [ -z "$APP_BUNDLE" ] || [ ! -d "$APP_BUNDLE" ]; then
-            echo "::error::Built .app bundle not found in $ARCHIVE_APPS"
-            ls -la "$ARCHIVE_APPS" || true
+            echo "::error::Built .app bundle not found at: $APP_BUNDLE"
             exit 1
           fi
 

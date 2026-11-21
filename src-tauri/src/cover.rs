@@ -61,12 +61,14 @@ pub async fn resolve_cover_bytes(
                 "local" => {
                     let p = Path::new(&track.path);
                     if let Ok(probe) = Probe::open(p) {
-                        if let Ok(tagged) = probe.guess_file_type().and_then(|pr| pr.read()) {
-                            if let Some(tag) =
-                                tagged.primary_tag().or_else(|| tagged.first_tag())
-                            {
-                                if let Some(pic) = tag.pictures().first() {
-                                    save_cover_bytes(&db.cover_cache_dir, track_id, pic.data());
+                        if let Ok(guessed) = probe.guess_file_type() {
+                            if let Ok(tagged) = guessed.read() {
+                                if let Some(tag) =
+                                    tagged.primary_tag().or_else(|| tagged.first_tag())
+                                {
+                                    if let Some(pic) = tag.pictures().first() {
+                                        save_cover_bytes(&db.cover_cache_dir, track_id, pic.data());
+                                    }
                                 }
                             }
                         }
@@ -111,13 +113,15 @@ pub fn ensure_artwork_path_sync(db: &LibraryDb, track_id: &str) -> Option<String
         if track.source == "local" {
             let p = Path::new(&track.path);
             if let Ok(probe) = Probe::open(p) {
-                if let Ok(tagged) = probe.guess_file_type().and_then(|pr| pr.read()) {
-                    if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
-                        if let Some(pic) = tag.pictures().first() {
-                            if let Some(saved) =
-                                save_cover_bytes(&db.cover_cache_dir, track_id, pic.data())
-                            {
-                                return Some(saved.to_string_lossy().to_string());
+                if let Ok(guessed) = probe.guess_file_type() {
+                    if let Ok(tagged) = guessed.read() {
+                        if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
+                            if let Some(pic) = tag.pictures().first() {
+                                if let Some(saved) =
+                                    save_cover_bytes(&db.cover_cache_dir, track_id, pic.data())
+                                {
+                                    return Some(saved.to_string_lossy().to_string());
+                                }
                             }
                         }
                     }

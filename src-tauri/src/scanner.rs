@@ -68,37 +68,39 @@ pub fn scan_local_folder(db: &LibraryDb, folder_path: &Path) -> Result<(usize, u
         let mut genre = None;
 
         if let Ok(probe) = Probe::open(p) {
-            if let Ok(tagged) = probe.guess_file_type().and_then(|pr| pr.read()) {
-                let props = tagged.properties();
-                duration_ms = props.duration().as_millis() as i64;
+            if let Ok(guessed) = probe.guess_file_type() {
+                if let Ok(tagged) = guessed.read() {
+                    let props = tagged.properties();
+                    duration_ms = props.duration().as_millis() as i64;
 
-                if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
-                    if let Some(t) = tag.title() {
-                        if !t.trim().is_empty() {
-                            title = t.trim().to_string();
+                    if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
+                        if let Some(t) = tag.title() {
+                            if !t.trim().is_empty() {
+                                title = t.trim().to_string();
+                            }
                         }
-                    }
-                    if let Some(a) = tag.artist() {
-                        artist = a.trim().to_string();
-                    }
-                    if let Some(al) = tag.album() {
-                        album = al.trim().to_string();
-                    }
-                    if let Some(aa) = tag.get_string(&ItemKey::AlbumArtist) {
-                        album_artist = aa.trim().to_string();
-                    }
-                    track_number = tag.track().map(|n| n as i64);
-                    disc_number = tag.disk().map(|n| n as i64);
-                    year = tag.year().map(|y| y as i64);
-                    genre = tag.genre().map(|g| g.trim().to_string());
-                    if let Some(lrc) = tag.get_string(&ItemKey::Lyrics) {
-                        if !lrc.trim().is_empty() {
-                            lyrics = Some(lrc.to_string());
+                        if let Some(a) = tag.artist() {
+                            artist = a.trim().to_string();
                         }
-                    }
-                    if let Some(pic) = tag.pictures().first() {
-                        has_cover = 1;
-                        cover::save_cover_bytes(&db.cover_cache_dir, &tid, pic.data());
+                        if let Some(al) = tag.album() {
+                            album = al.trim().to_string();
+                        }
+                        if let Some(aa) = tag.get_string(&ItemKey::AlbumArtist) {
+                            album_artist = aa.trim().to_string();
+                        }
+                        track_number = tag.track().map(|n| n as i64);
+                        disc_number = tag.disk().map(|n| n as i64);
+                        year = tag.year().map(|y| y as i64);
+                        genre = tag.genre().map(|g| g.trim().to_string());
+                        if let Some(lrc) = tag.get_string(&ItemKey::Lyrics) {
+                            if !lrc.trim().is_empty() {
+                                lyrics = Some(lrc.to_string());
+                            }
+                        }
+                        if let Some(pic) = tag.pictures().first() {
+                            has_cover = 1;
+                            cover::save_cover_bytes(&db.cover_cache_dir, &tid, pic.data());
+                        }
                     }
                 }
             }
@@ -154,11 +156,13 @@ pub fn scan_local_folder(db: &LibraryDb, folder_path: &Path) -> Result<(usize, u
 
 pub fn read_embedded_lyrics(file_path: &Path) -> Option<String> {
     if let Ok(probe) = Probe::open(file_path) {
-        if let Ok(tagged) = probe.guess_file_type().and_then(|pr| pr.read()) {
-            if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
-                if let Some(lrc) = tag.get_string(&ItemKey::Lyrics) {
-                    if !lrc.trim().is_empty() {
-                        return Some(lrc.to_string());
+        if let Ok(guessed) = probe.guess_file_type() {
+            if let Ok(tagged) = guessed.read() {
+                if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
+                    if let Some(lrc) = tag.get_string(&ItemKey::Lyrics) {
+                        if !lrc.trim().is_empty() {
+                            return Some(lrc.to_string());
+                        }
                     }
                 }
             }
