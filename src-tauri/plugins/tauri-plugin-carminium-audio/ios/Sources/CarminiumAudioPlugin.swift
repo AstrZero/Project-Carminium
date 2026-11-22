@@ -113,7 +113,6 @@ class CarminiumAudioPlugin: Plugin {
   private var failObserver: NSObjectProtocol?
   private var statusObservation: NSKeyValueObservation?
   private var eventChannel: Channel?
-  private var nowPlayingSessionStorage: AnyObject?
 
   private var currentTrackId: String = ""
   private var currentMetadata: TrackMetadataArgs?
@@ -124,8 +123,12 @@ class CarminiumAudioPlugin: Plugin {
   private var wasInterruptedWhilePlaying: Bool = false
   private var audioSessionConfigured: Bool = false
   private var remoteCommandsConfigured: Bool = false
+  private var artworkGeneration: Int = 0
 
   #if os(iOS)
+  private var lastArtworkPath: String?
+  private var loadingArtworkPath: String?
+  private var cachedArtwork: MPMediaItemArtwork?
   private var routePickerView: AVRoutePickerView?
   private var pendingPickInvoke: Invoke?
   private var pendingPickDestination: URL?
@@ -146,6 +149,7 @@ class CarminiumAudioPlugin: Plugin {
       webview.scrollView.minimumZoomScale = 1.0
       webview.scrollView.maximumZoomScale = 1.0
       webview.scrollView.pinchGestureRecognizer?.isEnabled = false
+      self.ensureRemoteCommandsConfigured()
     }
     #endif
   }
@@ -227,7 +231,13 @@ class CarminiumAudioPlugin: Plugin {
       self.currentTrackId = ""
       self.currentMetadata = nil
       self.currentDurationMs = 0
-      let center = self.activeNowPlayingInfoCenter()
+      self.artworkGeneration &+= 1
+      #if os(iOS)
+      self.lastArtworkPath = nil
+      self.loadingArtworkPath = nil
+      self.cachedArtwork = nil
+      #endif
+      let center = MPNowPlayingInfoCenter.default()
       center.nowPlayingInfo = nil
       center.playbackState = .stopped
       self.sendStateEvent("stopped")
@@ -280,7 +290,12 @@ class CarminiumAudioPlugin: Plugin {
   #if os(iOS)
   private func resolveTopViewController() -> UIViewController? {
     let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-    let window = scenes.flatMap { $0.windows }.first { $0.isKeyWindow }
+    let activeScene = scenes.first { $0.activationState == .foregroundActive }
+      ?? scenes.first { $0.activationState == .foregroundInactive }
+      ?? scenes.first
+    let window = activeScene?.windows.first { $0.isKeyWindow }
+      ?? activeScene?.windows.first
+      ?? scenes.flatMap { $0.windows }.first { $0.isKeyWindow }
       ?? scenes.flatMap { $0.windows }.first
     var top = window?.rootViewController
     while let presented = top?.presentedViewController {
@@ -307,7 +322,8 @@ class CarminiumAudioPlugin: Plugin {
         self.routePickerView = created
         picker = created
       }
-      if picker.superview == nil {
+      if picker.superview !== vc.view {
+        picker.removeFromSuperview()
         vc.view.addSubview(picker)
       }
       for subview in picker.subviews {
@@ -422,24 +438,11 @@ class CarminiumAudioPlugin: Plugin {
       self.player = p
       installPeriodicTimeObserver(on: p)
       installTimeControlObserver(on: p)
-      #if os(iOS)
-      if #available(iOS 16.0, *) {
-        let npSession = MPNowPlayingSession(players: [p])
-        npSession.automaticallyPublishesNowPlayingInfo = false
-        self.nowPlayingSessionStorage = npSession
-        npSession.becomeActiveIfPossible { _ in }
-      }
-      #endif
     } else {
       self.player?.replaceCurrentItem(with: item)
       self.player?.allowsExternalPlayback = false
       self.player?.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
       self.player?.volume = self.volumeLevel
-      #if os(iOS)
-      if #available(iOS 16.0, *), let npSession = self.nowPlayingSessionStorage as? MPNowPlayingSession {
-        npSession.becomeActiveIfPossible { _ in }
-      }
-      #endif
     }
 
     ensureRemoteCommandsConfigured()
@@ -643,8 +646,26 @@ class CarminiumAudioPlugin: Plugin {
     )
     nc.addObserver(
       self,
+      selector: #selector(handleMediaServicesReset(_:)),
+      name: AVAudioSession.mediaServicesWereResetNotification,
+      object: AVAudioSession.sharedInstance()
+    )
+    nc.addObserver(
+      self,
       selector: #selector(handleAppDidBecomeActive(_:)),
       name: UIApplication.didBecomeActiveNotification,
+      object: nil
+    )
+    nc.addObserver(
+      self,
+      selector: #selector(handleSceneDidActivate(_:)),
+      name: UIScene.didActivateNotification,
+      object: nil
+    )
+    nc.addObserver(
+      self,
+      selector: #selector(handleSceneDidEnterBackground(_:)),
+      name: UIScene.didEnterBackgroundNotification,
       object: nil
     )
   }
@@ -653,6 +674,36 @@ class CarminiumAudioPlugin: Plugin {
     runOnMain {
       guard self.currentMetadata != nil else { return }
       self.updateNowPlayingPlaybackState(isPlaying: self.isPlayingState)
+      self.sendTickEvent()
+    }
+  }
+
+  @objc private func handleSceneDidActivate(_ notification: Notification) {
+    runOnMain {
+      guard self.currentMetadata != nil else { return }
+      self.updateNowPlayingPlaybackState(isPlaying: self.isPlayingState)
+      self.sendTickEvent()
+    }
+  }
+
+  @objc private func handleSceneDidEnterBackground(_ notification: Notification) {
+    runOnMain {
+      guard self.currentMetadata != nil else { return }
+      self.updateNowPlayingPlaybackState(isPlaying: self.isPlayingState)
+    }
+  }
+
+  @objc private func handleMediaServicesReset(_ notification: Notification) {
+    runOnMain {
+      NSLog("[CarminiumAudio] AVAudioSession mediaServicesWereReset — rebuilding session & remote commands")
+      self.audioSessionConfigured = false
+      self.remoteCommandsConfigured = false
+      self.player?.pause()
+      self.isPlayingState = false
+      self.ensureRemoteCommandsConfigured()
+      self.updateNowPlayingPlaybackState(isPlaying: false)
+      self.sendStateEvent("paused")
+      self.sendTickEvent()
     }
   }
 
@@ -672,6 +723,7 @@ class CarminiumAudioPlugin: Plugin {
           self.isPlayingState = false
           self.updateNowPlayingPlaybackState(isPlaying: false)
           self.sendStateEvent("paused")
+          self.sendTickEvent()
         }
       case .ended:
         let optVal = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
@@ -682,6 +734,7 @@ class CarminiumAudioPlugin: Plugin {
           self.isPlayingState = true
           self.updateNowPlayingPlaybackState(isPlaying: true)
           self.sendStateEvent("playing")
+          self.sendTickEvent()
         }
         self.wasInterruptedWhilePlaying = false
       @unknown default:
@@ -711,25 +764,7 @@ class CarminiumAudioPlugin: Plugin {
   }
   #endif
 
-  // MARK: - MPNowPlayingSession / MPNowPlayingInfoCenter & MPRemoteCommandCenter
-
-  private func activeNowPlayingInfoCenter() -> MPNowPlayingInfoCenter {
-    #if os(iOS)
-    if #available(iOS 16.0, *), let npSession = self.nowPlayingSessionStorage as? MPNowPlayingSession {
-      return npSession.nowPlayingInfoCenter
-    }
-    #endif
-    return MPNowPlayingInfoCenter.default()
-  }
-
-  private func activeRemoteCommandCenter() -> MPRemoteCommandCenter {
-    #if os(iOS)
-    if #available(iOS 16.0, *), let npSession = self.nowPlayingSessionStorage as? MPNowPlayingSession {
-      return npSession.remoteCommandCenter
-    }
-    #endif
-    return MPRemoteCommandCenter.shared()
-  }
+  // MARK: - MPNowPlayingInfoCenter & MPRemoteCommandCenter
 
   private func performImmediatePause() {
     guard self.player != nil else {
@@ -750,9 +785,6 @@ class CarminiumAudioPlugin: Plugin {
     }
     #if os(iOS)
     self.ensureAudioSessionActive()
-    if #available(iOS 16.0, *), let npSession = self.nowPlayingSessionStorage as? MPNowPlayingSession {
-      npSession.becomeActiveIfPossible { _ in }
-    }
     #endif
     player.playImmediately(atRate: self.playbackRate)
     self.isPlayingState = true
@@ -769,8 +801,9 @@ class CarminiumAudioPlugin: Plugin {
     UIApplication.shared.beginReceivingRemoteControlEvents()
     #endif
 
-    let cc = activeRemoteCommandCenter()
+    let cc = MPRemoteCommandCenter.shared()
 
+    cc.playCommand.removeTarget(nil)
     cc.playCommand.isEnabled = true
     cc.playCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
@@ -780,6 +813,7 @@ class CarminiumAudioPlugin: Plugin {
       return .success
     }
 
+    cc.pauseCommand.removeTarget(nil)
     cc.pauseCommand.isEnabled = true
     cc.pauseCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
@@ -789,6 +823,7 @@ class CarminiumAudioPlugin: Plugin {
       return .success
     }
 
+    cc.togglePlayPauseCommand.removeTarget(nil)
     cc.togglePlayPauseCommand.isEnabled = true
     cc.togglePlayPauseCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
@@ -803,6 +838,17 @@ class CarminiumAudioPlugin: Plugin {
       return .success
     }
 
+    cc.stopCommand.removeTarget(nil)
+    cc.stopCommand.isEnabled = true
+    cc.stopCommand.addTarget { [weak self] _ in
+      guard let self = self else { return .commandFailed }
+      self.runOnMain {
+        self.performImmediatePause()
+      }
+      return .success
+    }
+
+    cc.nextTrackCommand.removeTarget(nil)
     cc.nextTrackCommand.isEnabled = true
     cc.nextTrackCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
@@ -810,6 +856,7 @@ class CarminiumAudioPlugin: Plugin {
       return .success
     }
 
+    cc.previousTrackCommand.removeTarget(nil)
     cc.previousTrackCommand.isEnabled = true
     cc.previousTrackCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
@@ -817,6 +864,7 @@ class CarminiumAudioPlugin: Plugin {
       return .success
     }
 
+    cc.changePlaybackPositionCommand.removeTarget(nil)
     cc.changePlaybackPositionCommand.isEnabled = true
     cc.changePlaybackPositionCommand.addTarget { [weak self] event in
       guard
@@ -830,10 +878,23 @@ class CarminiumAudioPlugin: Plugin {
       }
       return .success
     }
+
+    // Explicitly disable unused remote commands so Lock Screen & Dynamic Island stay clean
+    cc.skipForwardCommand.isEnabled = false
+    cc.skipBackwardCommand.isEnabled = false
+    cc.seekForwardCommand.isEnabled = false
+    cc.seekBackwardCommand.isEnabled = false
+    cc.changePlaybackRateCommand.isEnabled = false
+    cc.ratingCommand.isEnabled = false
+    cc.likeCommand.isEnabled = false
+    cc.dislikeCommand.isEnabled = false
+    cc.bookmarkCommand.isEnabled = false
+    cc.enableLanguageOptionCommand.isEnabled = false
+    cc.disableLanguageOptionCommand.isEnabled = false
   }
 
   private func applyNowPlayingInfo(metadata: TrackMetadataArgs, isPlaying: Bool) {
-    let center = activeNowPlayingInfoCenter()
+    let center = MPNowPlayingInfoCenter.default()
     var info = center.nowPlayingInfo ?? [String: Any]()
     info[MPMediaItemPropertyTitle] = metadata.title
     info[MPMediaItemPropertyArtist] = metadata.artist
@@ -851,12 +912,67 @@ class CarminiumAudioPlugin: Plugin {
     info[MPNowPlayingInfoPropertyIsLiveStream] = false
 
     #if os(iOS)
-    if let artPath = metadata.artworkPath, !artPath.isEmpty,
-       let image = UIImage(contentsOfFile: artPath) {
-      let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-      info[MPMediaItemPropertyArtwork] = artwork
-    } else {
+    let artPath = metadata.artworkPath ?? ""
+    if artPath.isEmpty {
+      self.artworkGeneration &+= 1
+      self.lastArtworkPath = nil
+      self.loadingArtworkPath = nil
+      self.cachedArtwork = nil
       info.removeValue(forKey: MPMediaItemPropertyArtwork)
+    } else if artPath == self.lastArtworkPath, let cached = self.cachedArtwork {
+      info[MPMediaItemPropertyArtwork] = cached
+    } else if artPath != self.loadingArtworkPath {
+      self.artworkGeneration &+= 1
+      let gen = self.artworkGeneration
+      self.loadingArtworkPath = artPath
+      self.lastArtworkPath = nil
+      self.cachedArtwork = nil
+      info.removeValue(forKey: MPMediaItemPropertyArtwork)
+
+      DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        guard
+          let rawImage = UIImage(contentsOfFile: artPath),
+          rawImage.size.width > 0,
+          rawImage.size.height > 0
+        else {
+          DispatchQueue.main.async {
+            guard let self = self, self.artworkGeneration == gen else { return }
+            self.loadingArtworkPath = nil
+          }
+          return
+        }
+        let maxDim: CGFloat = 600.0
+        let pixelW = rawImage.size.width * rawImage.scale
+        let pixelH = rawImage.size.height * rawImage.scale
+        let finalImage: UIImage
+        if pixelW > maxDim || pixelH > maxDim {
+          let scaleFactor = min(maxDim / max(pixelW, 1.0), maxDim / max(pixelH, 1.0))
+          let targetSize = CGSize(
+            width: max(1.0, floor(pixelW * scaleFactor)),
+            height: max(1.0, floor(pixelH * scaleFactor))
+          )
+          let format = UIGraphicsImageRendererFormat()
+          format.scale = 1.0
+          format.opaque = false
+          let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+          finalImage = renderer.image { _ in
+            rawImage.draw(in: CGRect(origin: .zero, size: targetSize))
+          }
+        } else {
+          finalImage = rawImage
+        }
+        let artwork = MPMediaItemArtwork(boundsSize: finalImage.size) { _ in finalImage }
+        DispatchQueue.main.async {
+          guard let self = self, self.artworkGeneration == gen else { return }
+          self.lastArtworkPath = artPath
+          self.loadingArtworkPath = nil
+          self.cachedArtwork = artwork
+          let c = MPNowPlayingInfoCenter.default()
+          var updated = c.nowPlayingInfo ?? [String: Any]()
+          updated[MPMediaItemPropertyArtwork] = artwork
+          c.nowPlayingInfo = updated
+        }
+      }
     }
     #endif
 
@@ -865,9 +981,13 @@ class CarminiumAudioPlugin: Plugin {
   }
 
   private func updateNowPlayingPlaybackState(isPlaying: Bool, overrideElapsedSec: Double? = nil) {
-    let center = activeNowPlayingInfoCenter()
+    let center = MPNowPlayingInfoCenter.default()
     guard var info = center.nowPlayingInfo else {
-      center.playbackState = isPlaying ? .playing : .paused
+      if let meta = self.currentMetadata {
+        self.applyNowPlayingInfo(metadata: meta, isPlaying: isPlaying)
+      } else {
+        center.playbackState = isPlaying ? .playing : .paused
+      }
       return
     }
     let durSec = currentEffectiveDurationMs() / 1000.0
