@@ -1,7 +1,7 @@
 [package]
 name = "carminium"
 version = "1.2.240"
-description = "Project Carminium — Material You Music Player for iOS (Tauri v2)"
+description = "Project Carminium — Material You Music Player for Mobile (Tauri v2)"
 authors = ["Seirai Haraguchi", "AstrZero"]
 edition = "2021"
 

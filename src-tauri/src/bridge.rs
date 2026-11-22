@@ -158,13 +158,14 @@ pub async fn dispatch_bridge<R: Runtime>(
             dump(&tracks)
         }
 
-        // ── Local Files / iOS Document Picker ───────────────────────
-        // Imported libraries are placed inside `private_libraries_dir` so they stay
-        // separated from the user's public Files.app `Documents/` folder.
+        // ── Local Files / Mobile Picker ─────────────────────────────
+        // iOS: imported libraries go into `private_libraries_dir` outside Files.app.
+        // Android: supports zero-copy directory paths (when READ_MEDIA_AUDIO is granted)
+        //          as well as SAF fallback copying into `private_libraries_dir`.
         "open_folder_dialog" => {
             let dest = paths.private_libraries_dir.to_string_lossy().to_string();
             match app.carminium_audio().pick_audio_files(dest).await {
-                Ok(res) if !res.canceled && !res.copied_paths.is_empty() => {
+                Ok(res) if !res.canceled && (!res.copied_paths.is_empty() || res.imported_dir.is_some()) => {
                     let target = res
                         .imported_dir
                         .unwrap_or_else(|| paths.private_libraries_dir.to_string_lossy().to_string());
@@ -176,7 +177,7 @@ pub async fn dispatch_bridge<R: Runtime>(
         "pick_audio_files" => {
             let dest = paths.private_libraries_dir.to_string_lossy().to_string();
             match app.carminium_audio().pick_audio_files(dest).await {
-                Ok(res) if !res.canceled && !res.copied_paths.is_empty() => {
+                Ok(res) if !res.canceled && (!res.copied_paths.is_empty() || res.imported_dir.is_some()) => {
                     let target_str = res
                         .imported_dir
                         .unwrap_or_else(|| paths.private_libraries_dir.to_string_lossy().to_string());
@@ -194,6 +195,34 @@ pub async fn dispatch_bridge<R: Runtime>(
                 _ => Value::String(String::new()),
             }
         }
+        "scan_device_music" => match app.carminium_audio().scan_device_music().await {
+            Ok(res) if res.permission_granted && !res.music_dirs.is_empty() => {
+                let dirs: Vec<PathBuf> = res
+                    .music_dirs
+                    .iter()
+                    .map(PathBuf::from)
+                    .filter(|p| p.exists() && p.is_dir())
+                    .collect();
+                for d in &dirs {
+                    let _ = db.ensure_folder(&d.to_string_lossy());
+                }
+                let first = dirs
+                    .first()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let db_c = db.clone();
+                let app_c = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    for d in dirs {
+                        let _ = scanner::scan_local_folder(&db_c, &d);
+                    }
+                    emit_folders_updated(&app_c, &db_c);
+                    emit_bridge(&app_c, "library_updated", json!(""));
+                });
+                Value::String(first)
+            }
+            _ => Value::String(String::new()),
+        },
         "add_folder" => {
             let raw_path = arg_str(&args, 0);
             let target = if raw_path.is_empty() {

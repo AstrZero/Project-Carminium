@@ -1,0 +1,2 @@
+-keep class com.yunofactory.carminium.audio.** { *; }
+-keepclassmembers class com.yunofactory.carminium.audio.** { *; }

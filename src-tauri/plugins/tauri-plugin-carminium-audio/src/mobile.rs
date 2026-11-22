@@ -13,6 +13,9 @@ use crate::models::*;
 #[cfg(target_os = "ios")]
 tauri::ios_plugin_binding!(init_plugin_carminium_audio);
 
+#[cfg(target_os = "android")]
+const ANDROID_PLUGIN_IDENTIFIER: &str = "com.yunofactory.carminium.audio";
+
 enum NativeCmd {
     SetEventChannel(Channel),
     Play(PlayRequest),
@@ -37,11 +40,14 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 ) -> crate::Result<CarminiumAudio<R>> {
     #[cfg(target_os = "ios")]
     let handle = api.register_ios_plugin(init_plugin_carminium_audio)?;
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(target_os = "android")]
+    let handle = api.register_android_plugin(ANDROID_PLUGIN_IDENTIFIER, "CarminiumAudioPlugin")?;
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let handle = {
         let _ = api;
         return Err(crate::Error::Message(
-            "tauri-plugin-carminium-audio mobile backend is only supported on iOS".into(),
+            "tauri-plugin-carminium-audio mobile backend is only supported on iOS and Android"
+                .into(),
         ));
     };
 
@@ -191,5 +197,22 @@ impl<R: Runtime> CarminiumAudio<R> {
             .run_mobile_plugin_async("getDiagnostics", ())
             .await
             .map_err(Into::into)
+    }
+
+    pub async fn scan_device_music(&self) -> crate::Result<ScanDeviceMusicResponse> {
+        #[cfg(target_os = "android")]
+        {
+            self.handle
+                .run_mobile_plugin_async("scanDeviceMusic", ())
+                .await
+                .map_err(Into::into)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            Ok(ScanDeviceMusicResponse {
+                music_dirs: Vec::new(),
+                permission_granted: false,
+            })
+        }
     }
 }

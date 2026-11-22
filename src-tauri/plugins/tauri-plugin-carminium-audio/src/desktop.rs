@@ -77,7 +77,14 @@ impl<R: Runtime> CarminiumAudio<R> {
 
     pub async fn get_diagnostics(&self) -> crate::Result<AudioDiagnosticsResponse> {
         Ok(AudioDiagnosticsResponse {
-            text: "Diagnostics only available on iOS.".to_string(),
+            text: "Diagnostics only available on mobile.".to_string(),
+        })
+    }
+
+    pub async fn scan_device_music(&self) -> crate::Result<ScanDeviceMusicResponse> {
+        Ok(ScanDeviceMusicResponse {
+            music_dirs: Vec::new(),
+            permission_granted: false,
         })
     }
 }

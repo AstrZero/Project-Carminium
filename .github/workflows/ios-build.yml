@@ -7,18 +7,22 @@ name: Build iOS (Unsigned IPA)
 on:
   push:
     branches:
-      - iOS
+      - mobile
     paths-ignore:
       - '**.md'
       - 'docs/**'
       - 'LICENSE'
+      - '.github/workflows/android-build.yml'
+      - 'src-tauri/plugins/tauri-plugin-carminium-audio/android/**'
   pull_request:
     branches:
-      - iOS
+      - mobile
     paths-ignore:
       - '**.md'
       - 'docs/**'
       - 'LICENSE'
+      - '.github/workflows/android-build.yml'
+      - 'src-tauri/plugins/tauri-plugin-carminium-audio/android/**'
   workflow_dispatch:
     inputs:
       configuration:

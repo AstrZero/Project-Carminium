@@ -122,39 +122,86 @@
           .filter(function (g) { return g.rows.length > 0; });
 
         if (sec.id === 'general') {
+          var isAndroidOs = window.__CARMINIUM_MOBILE_OS__ === 'android';
+          var localRows = isAndroidOs ? [
+            {
+              type: 'action',
+              bind: '_android_scan_music',
+              icon: 'music_note',
+              label: '一键扫描手机音乐',
+              sub: '请求音频读取权限后，直接零拷贝扫描手机「Music / Download」目录中的本地音乐',
+              buttonText: '扫描音乐',
+              buttonIcon: 'refresh',
+              onAction: function () {
+                App.utils.call('scan_device_music').then(function (dir) {
+                  if (App.utils && App.utils.toast) {
+                    App.utils.toast(dir ? '正在扫描手机音乐目录…' : '未授予音频读取权限或未找到音乐目录');
+                  }
+                });
+              },
+            },
+            {
+              type: 'action',
+              bind: '_ios_import_files',
+              icon: 'folder_open',
+              label: '选择自定义音乐文件夹',
+              sub: '通过系统文件夹选择器添加任意曲库目录（已授权存储时零拷贝直读）',
+              buttonText: '选择文件夹',
+              buttonIcon: 'upload_file',
+              onAction: function () {
+                App.utils.call('pick_audio_files').then(function (dir) {
+                  if (dir && App.utils && App.utils.toast) {
+                    App.utils.toast('正在扫描所选目录…');
+                  }
+                });
+              },
+            },
+            {
+              type: 'action',
+              bind: '_ios_audio_diagnostics',
+              icon: 'info',
+              label: '系统音频与播放诊断',
+              sub: '查看签名指纹、权限状态、ExoPlayer / MediaSession 与音频设备实时日志',
+              buttonText: '打开诊断',
+              buttonIcon: 'info',
+              onAction: function () {
+                _openIosDiagnosticsModal();
+              },
+            },
+          ] : [
+            {
+              type: 'action',
+              bind: '_ios_import_files',
+              icon: 'folder_open',
+              label: '导入独立音乐库',
+              sub: '从「文件」App 选择音频或文件夹导入到应用私有目录；也可直接把歌曲放到「我的 iPhone → Project Carminium」自动扫描',
+              buttonText: '选择音频',
+              buttonIcon: 'upload_file',
+              onAction: function () {
+                App.utils.call('pick_audio_files').then(function (dir) {
+                  if (dir && App.utils && App.utils.toast) {
+                    App.utils.toast('正在扫描导入的音频…');
+                  }
+                });
+              },
+            },
+            {
+              type: 'action',
+              bind: '_ios_audio_diagnostics',
+              icon: 'info',
+              label: '系统音频与灵动岛诊断',
+              sub: '查看 Bundle ID、签名描述文件、SceneDelegate、AVAudioSession 及 AirPods 事件实时日志',
+              buttonText: '打开诊断',
+              buttonIcon: 'info',
+              onAction: function () {
+                _openIosDiagnosticsModal();
+              },
+            },
+          ];
           groups.unshift({
             titleKey: 'ios.group.localImport',
-            title: 'iOS 本地曲库',
-            rows: [
-              {
-                type: 'action',
-                bind: '_ios_import_files',
-                icon: 'folder_open',
-                label: '导入独立音乐库',
-                sub: '从「文件」App 选择音频或文件夹导入到应用私有目录；也可直接把歌曲放到「我的 iPhone → Project Carminium」自动扫描',
-                buttonText: '选择音频',
-                buttonIcon: 'upload_file',
-                onAction: function () {
-                  App.utils.call('pick_audio_files').then(function (dir) {
-                    if (dir && App.utils && App.utils.toast) {
-                      App.utils.toast('正在扫描导入的音频…');
-                    }
-                  });
-                },
-              },
-              {
-                type: 'action',
-                bind: '_ios_audio_diagnostics',
-                icon: 'info',
-                label: '系统音频与灵动岛诊断',
-                sub: '查看 Bundle ID、签名描述文件、SceneDelegate、AVAudioSession 及 AirPods 事件实时日志',
-                buttonText: '打开诊断',
-                buttonIcon: 'info',
-                onAction: function () {
-                  _openIosDiagnosticsModal();
-                },
-              },
-            ],
+            title: isAndroidOs ? 'Android 本地曲库' : 'iOS 本地曲库',
+            rows: localRows,
           });
         }
 
@@ -305,9 +352,12 @@
     overlay.className = 'dialog-overlay open';
     overlay.style.cssText = 'position:fixed;inset:0;z-index:100020;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.52);padding:16px;';
 
+    var diagTitle = (window.__CARMINIUM_MOBILE_OS__ === 'android')
+      ? 'Android 系统音频与播放诊断'
+      : 'iOS 系统音频与灵动岛诊断';
     overlay.innerHTML = '' +
       '<div class="md-dialog" style="background:var(--md-surface-container-high);border-radius:24px;padding:18px;width:min(460px,calc(100vw - 24px));max-height:82vh;display:flex;flex-direction:column;gap:12px;">' +
-        '<div style="font-size:17px;font-weight:600;color:var(--md-on-surface);">iOS 系统音频与灵动岛诊断</div>' +
+        '<div style="font-size:17px;font-weight:600;color:var(--md-on-surface);">' + diagTitle + '</div>' +
         '<textarea readonly data-role="diag-box" style="width:100%;height:52vh;min-height:240px;resize:none;border-radius:14px;border:1px solid var(--md-outline-variant);background:var(--md-surface-container-lowest);color:var(--md-on-surface);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.45;padding:10px;box-sizing:border-box;-webkit-user-select:text;user-select:text;">正在读取诊断信息…</textarea>' +
         '<div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">' +
           '<button type="button" class="btn-text" data-role="refresh">刷新</button>' +
@@ -922,40 +972,100 @@
       }, { passive: true });
     });
 
-    // Left-edge swipe right -> Back button on subpages / Settings Level-2 / Now Playing
-    var edgeActive = false;
-    var edgeStartX = 0;
-    var edgeStartY = 0;
+    // Left-edge swipe right -> Back button on iOS (Android uses native OS back gesture via __carminiumHandleAndroidBack)
+    if (window.__CARMINIUM_MOBILE_OS__ !== 'android') {
+      var edgeActive = false;
+      var edgeStartX = 0;
+      var edgeStartY = 0;
 
-    document.addEventListener('touchstart', function (e) {
-      if (!_isPhone() || e.touches.length !== 1) return;
-      var t = e.touches[0];
-      if (t.clientX <= 24) {
-        edgeActive = true;
-        edgeStartX = t.clientX;
-        edgeStartY = t.clientY;
-      } else {
-        edgeActive = false;
-      }
-    }, { passive: true });
-
-    document.addEventListener('touchend', function (e) {
-      if (!edgeActive) return;
-      edgeActive = false;
-      var t = e.changedTouches && e.changedTouches[0];
-      if (!t) return;
-      var dx = t.clientX - edgeStartX;
-      var dy = Math.abs(t.clientY - edgeStartY);
-      if (dx > 70 && dy < 60) {
-        if (document.body.classList.contains('np-fullscreen')) {
-          _closePhoneNowPlaying();
-        } else if (!_exitSettingsDetail() && document.body.classList.contains('ios-subpage')) {
-          var backBtn = document.getElementById('title-bar-back');
-          if (backBtn) backBtn.click();
+      document.addEventListener('touchstart', function (e) {
+        if (!_isPhone() || e.touches.length !== 1) return;
+        var t = e.touches[0];
+        if (t.clientX <= 24) {
+          edgeActive = true;
+          edgeStartX = t.clientX;
+          edgeStartY = t.clientY;
+        } else {
+          edgeActive = false;
         }
-      }
-    }, { passive: true });
+      }, { passive: true });
+
+      document.addEventListener('touchend', function (e) {
+        if (!edgeActive) return;
+        edgeActive = false;
+        var t = e.changedTouches && e.changedTouches[0];
+        if (!t) return;
+        var dx = t.clientX - edgeStartX;
+        var dy = Math.abs(t.clientY - edgeStartY);
+        if (dx > 70 && dy < 60) {
+          if (document.body.classList.contains('np-fullscreen')) {
+            _closePhoneNowPlaying();
+          } else if (!_exitSettingsDetail() && document.body.classList.contains('ios-subpage')) {
+            var backBtn = document.getElementById('title-bar-back');
+            if (backBtn) backBtn.click();
+          }
+        }
+      }, { passive: true });
+    }
   }
+
+  // Android hardware/gesture Back handler (called by Kotlin OnBackPressedCallback)
+  window.__carminiumHandleAndroidBack = function () {
+    // 1. Close open modal dialogs / overlays
+    var openDialog = document.querySelector('.dialog-overlay.open, .md-dialog-overlay.open');
+    if (openDialog) {
+      var closeBtn = openDialog.querySelector('[data-role="close"], [data-role="cancel"], .dialog-close');
+      if (closeBtn) {
+        closeBtn.click();
+      } else if (openDialog.parentNode) {
+        openDialog.parentNode.removeChild(openDialog);
+      }
+      return 'handled';
+    }
+
+    // 2. Close context menus or bottom-nav "More" popup
+    var ctxMenu = document.querySelector('.context-menu.open, .context-menu:not([hidden])');
+    if (ctxMenu && ctxMenu.offsetParent !== null) {
+      document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return 'handled';
+    }
+    if (_morePopupEl && !_morePopupEl.hidden) {
+      _closeMorePopup();
+      return 'handled';
+    }
+
+    // 3. Close Now Playing queue drawer if open inside fullscreen player
+    var npPane = document.getElementById('now-playing-pane');
+    if (npPane && npPane.classList.contains('show-queue')) {
+      var qBtn = document.getElementById('np-queue-btn');
+      if (qBtn) qBtn.click();
+      else npPane.classList.remove('show-queue');
+      return 'handled';
+    }
+
+    // 4. Collapse fullscreen Now Playing sheet
+    if (document.body.classList.contains('np-fullscreen')) {
+      _closePhoneNowPlaying();
+      return 'handled';
+    }
+
+    // 5. Exit Settings Level-2 back to Level-1
+    if (_exitSettingsDetail()) {
+      return 'handled';
+    }
+
+    // 6. Navigate back on any subpage (Album / Artist / Playlist / Folder / Settings)
+    if (document.body.classList.contains('ios-subpage')) {
+      var backBtn = document.getElementById('title-bar-back');
+      if (backBtn) {
+        backBtn.click();
+        return 'handled';
+      }
+    }
+
+    // 7. At top-level root page: minimize app to background so playback continues
+    return 'minimize';
+  };
 
   // ── 5. Bootstrap & Settings Sync ─────────────────────────────────────
 

@@ -1,0 +1,374 @@
+# Build Release-signed Android arm64 APK for Project Carminium (Tauri v2).
+# Signed with v1 + v2 + v3 APK Signature Scheme via GitHub Actions Secrets
+# (PKCS12 release keystore) for clean installs and smooth in-place upgrades.
+name: Build Android (Signed Release APK)
+
+on:
+  push:
+    branches:
+      - mobile
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.github/workflows/ios-build.yml'
+      - 'src-tauri/plugins/tauri-plugin-carminium-audio/ios/**'
+  pull_request:
+    branches:
+      - mobile
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.github/workflows/ios-build.yml'
+      - 'src-tauri/plugins/tauri-plugin-carminium-audio/ios/**'
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 'Android build configuration (release or debug)'
+        required: false
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android-apk:
+    name: Build Android APK (arm64-v8a)
+    runs-on: ubuntu-latest
+    env:
+      RUST_BACKTRACE: '1'
+      CARGO_TERM_COLOR: always
+      BUILD_CONFIG: ${{ github.event.inputs.configuration || 'release' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read app version
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f version.json ]; then
+            VERSION=$(node -p "require('./version.json').version" 2>/dev/null || jq -r '.version' version.json)
+          elif [ -f package.json ]; then
+            VERSION=$(jq -r '.version // "0.0.0"' package.json)
+          else
+            VERSION="0.0.0"
+          fi
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${VERSION} (${SHORT_SHA})"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Rust toolchain (Android arm64-v8a)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          prefix-key: android-arm64
+
+      - name: Configure Android SDK & NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          export ANDROID_HOME="$SDK_ROOT"
+          export ANDROID_SDK_ROOT="$SDK_ROOT"
+
+          # Ensure Android 15 (API 35) platform & build-tools are installed
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+            [ -d "$SDK_ROOT/platforms/android-35" ] || "$SDKMANAGER" "platforms;android-35"
+            [ -d "$SDK_ROOT/build-tools/35.0.0" ] || "$SDKMANAGER" "build-tools;35.0.0"
+          fi
+
+          # Locate highest installed NDK (install if absent)
+          NDK_DIR=$(find "$SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -z "$NDK_DIR" ] && [ -x "$SDKMANAGER" ]; then
+            "$SDKMANAGER" "ndk;27.2.12479018"
+            NDK_DIR=$(find "$SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          fi
+          if [ -z "$NDK_DIR" ]; then
+            echo "::error::Android NDK not found under $SDK_ROOT/ndk"
+            exit 1
+          fi
+
+          BUILD_TOOLS_DIR=$(find "$SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_BUILD_TOOLS=$BUILD_TOOLS_DIR" >> "$GITHUB_ENV"
+          echo "Android SDK: $SDK_ROOT"
+          echo "Android NDK: $NDK_DIR"
+          echo "Build Tools: $BUILD_TOOLS_DIR"
+
+      - name: Install frontend dependencies & Tauri CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          elif [ -f package.json ]; then
+            npm install --no-audit --no-fund
+          fi
+
+          if [ -x node_modules/.bin/tauri ]; then
+            echo "$(pwd)/node_modules/.bin" >> "$GITHUB_PATH"
+            ./node_modules/.bin/tauri --version
+          else
+            cargo install tauri-cli --version "^2" --locked
+            cargo tauri --version
+          fi
+
+      - name: Initialize Tauri Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d src-tauri/gen/android ]; then
+            if [ -x node_modules/.bin/tauri ]; then
+              npx tauri android init --ci
+            else
+              cargo tauri android init --ci
+            fi
+          fi
+
+      - name: Generate Android App Icons from build/icon.png
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f build/icon.png ]; then
+            if [ -x node_modules/.bin/tauri ]; then
+              npx tauri icon build/icon.png --ios-color '#111318' || true
+            else
+              cargo tauri icon build/icon.png --ios-color '#111318' || true
+            fi
+          fi
+
+      - name: Configure Android Gradle, Manifest & Network Security Policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          RAW_VER="${{ steps.meta.outputs.version }}"
+          SHORT_VER=$(echo "$RAW_VER" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+          VER_CODE="${GITHUB_RUN_NUMBER}"
+
+          # 1. Explicit network_security_config.xml for self-hosted LAN Subsonic / Navidrome / WebDAV
+          XML_DIR="src-tauri/gen/android/app/src/main/res/xml"
+          mkdir -p "$XML_DIR"
+          cat > "$XML_DIR/network_security_config.xml" <<'XMLEOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted="true">
+                  <trust-anchors>
+                      <certificates src="system" />
+                  </trust-anchors>
+              </base-config>
+          </network-security-config>
+          XMLEOF
+
+          # 2. Patch app/build.gradle.kts (compileSdk/targetSdk 35, minSdk 26, versionCode/versionName)
+          python3 - "$SHORT_VER" "$VER_CODE" <<'PYEOF'
+          import re, sys, pathlib
+
+          short_ver, ver_code = sys.argv[1], sys.argv[2]
+          gradle = pathlib.Path("src-tauri/gen/android/app/build.gradle.kts")
+          text = gradle.read_text(encoding="utf-8")
+
+          text = re.sub(r"compileSdk\s*=\s*\d+", "compileSdk = 35", text)
+          text = re.sub(r"targetSdk\s*=\s*\d+", "targetSdk = 35", text)
+          text = re.sub(r"minSdk\s*=\s*\d+", "minSdk = 26", text)
+          if re.search(r"versionCode\s*=", text):
+              text = re.sub(r"versionCode\s*=\s*[^\n]+", f"versionCode = {ver_code}", text)
+          if re.search(r"versionName\s*=", text):
+              text = re.sub(r"versionName\s*=\s*[^\n]+", f'versionName = "{short_ver}"', text)
+
+          gradle.write_text(text, encoding="utf-8")
+          print("Patched app/build.gradle.kts (compileSdk=35, targetSdk=35, minSdk=26, versionCode=" + ver_code + ")")
+
+          # 3. Patch AndroidManifest.xml (singleTask launchMode, networkSecurityConfig, carminium:// scheme)
+          manifest = pathlib.Path("src-tauri/gen/android/app/src/main/AndroidManifest.xml")
+          m = manifest.read_text(encoding="utf-8")
+
+          if "networkSecurityConfig" not in m:
+              m = m.replace(
+                  "<application",
+                  '<application\n        android:networkSecurityConfig="@xml/network_security_config"',
+                  1,
+              )
+
+          if 'android:launchMode=' in m:
+              m = re.sub(r'android:launchMode="[^"]*"', 'android:launchMode="singleTask"', m, count=1)
+          else:
+              m = m.replace(
+                  "<activity",
+                  '<activity\n            android:launchMode="singleTask"',
+                  1,
+              )
+
+          if 'android:scheme="carminium"' not in m and "</activity>" in m:
+              scheme_filter = (
+                  '            <intent-filter>\n'
+                  '                <action android:name="android.intent.action.VIEW" />\n'
+                  '                <category android:name="android.intent.category.DEFAULT" />\n'
+                  '                <category android:name="android.intent.category.BROWSABLE" />\n'
+                  '                <data android:scheme="carminium" />\n'
+                  '            </intent-filter>\n'
+                  '        </activity>'
+              )
+              m = m.replace("</activity>", scheme_filter, 1)
+
+          manifest.write_text(m, encoding="utf-8")
+          print("Patched AndroidManifest.xml cleanly.")
+          PYEOF
+
+      - name: Rebuild Material Symbols Rounded font subset (official variable font)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f Fonts/MaterialSymbolsRounded-VariableFont.ttf ] && [ -f scripts/subset_fonts.py ]; then
+            python3 -m pip install --break-system-packages --quiet fonttools brotli || python3 -m pip install --user --quiet fonttools brotli
+            python3 scripts/subset_fonts.py
+            if [ -f web/fonts/material-symbols-rounded.subset.woff2 ]; then
+              mv -f web/fonts/material-symbols-rounded.subset.woff2 web/fonts/material-symbols-rounded.woff2
+            fi
+            rm -f web/fonts/_msr_pruned_tmp.woff2
+            ls -lh web/fonts/material-symbols-rounded.woff2
+          fi
+
+      - name: Build Android APK (tauri android build --apk --target aarch64)
+        id: build_android
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pwd)/node_modules/.bin:$HOME/.cargo/bin:$PATH"
+
+          BUILD_ARGS=(android build --apk --target aarch64)
+          if [ "${BUILD_CONFIG}" = "debug" ]; then
+            BUILD_ARGS+=(--debug)
+          fi
+
+          echo "Running: npx tauri ${BUILD_ARGS[*]}"
+          if [ -x node_modules/.bin/tauri ]; then
+            npx tauri "${BUILD_ARGS[@]}"
+          else
+            cargo tauri "${BUILD_ARGS[@]}"
+          fi
+
+          RAW_APK=$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*arm64*.apk' | sort | tail -n 1 || true)
+          if [ -z "$RAW_APK" ]; then
+            RAW_APK=$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' | sort | tail -n 1 || true)
+          fi
+          if [ -z "$RAW_APK" ] || [ ! -f "$RAW_APK" ]; then
+            echo "::error::Built APK not found under src-tauri/gen/android/app/build/outputs/apk"
+            exit 1
+          fi
+          echo "Found built APK: $RAW_APK"
+          ls -lh "$RAW_APK"
+          echo "raw_apk=${RAW_APK}" >> "$GITHUB_OUTPUT"
+
+      - name: Zipalign & Sign Release APK (v1 + v2 + v3)
+        id: sign
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          RAW_APK="${{ steps.build_android.outputs.raw_apk }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          SHORT_SHA="${{ steps.meta.outputs.short_sha }}"
+
+          mkdir -p dist-android
+          ALIGNED_APK="dist-android/aligned.apk"
+          ZIPALIGN="${ANDROID_BUILD_TOOLS}/zipalign"
+          APKSIGNER="${ANDROID_BUILD_TOOLS}/apksigner"
+
+          "$ZIPALIGN" -f -p 4 "$RAW_APK" "$ALIGNED_APK"
+
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ] && [ -n "${ANDROID_KEYSTORE_PASSWORD:-}" ] && [ -n "${ANDROID_KEY_ALIAS:-}" ]; then
+            FINAL_NAME="Carminium-${VERSION}-${SHORT_SHA}-android-arm64-release.apk"
+            FINAL_APK="dist-android/${FINAL_NAME}"
+            KS_PATH="/tmp/carminium-release.p12"
+            trap 'rm -f "$KS_PATH"' EXIT
+
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KS_PATH"
+            KEY_PASS_ENV="ANDROID_KEY_PASSWORD"
+            if [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
+              KEY_PASS_ENV="ANDROID_KEYSTORE_PASSWORD"
+            fi
+
+            "$APKSIGNER" sign \
+              --ks "$KS_PATH" \
+              --ks-type PKCS12 \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass "env:ANDROID_KEYSTORE_PASSWORD" \
+              --key-pass "env:${KEY_PASS_ENV}" \
+              --v1-signing-enabled true \
+              --v2-signing-enabled true \
+              --v3-signing-enabled true \
+              --out "$FINAL_APK" \
+              "$ALIGNED_APK"
+
+            echo "Verifying Release APK signature (v1+v2+v3):"
+            "$APKSIGNER" verify --verbose --print-certs "$FINAL_APK"
+          else
+            echo "::warning::ANDROID_KEYSTORE_* secrets not configured; falling back to temporary key."
+            FINAL_NAME="Carminium-${VERSION}-${SHORT_SHA}-android-arm64-unsigned-fallback.apk"
+            FINAL_APK="dist-android/${FINAL_NAME}"
+            TMP_KS="/tmp/carminium-temp.jks"
+            trap 'rm -f "$TMP_KS"' EXIT
+            keytool -genkeypair -v -keystore "$TMP_KS" -alias temp -keyalg RSA -keysize 2048 -validity 365 \
+              -storepass temp1234 -keypass temp1234 -dname "CN=Carminium Temp" >/dev/null 2>&1
+            "$APKSIGNER" sign \
+              --ks "$TMP_KS" \
+              --ks-key-alias temp \
+              --ks-pass pass:temp1234 \
+              --key-pass pass:temp1234 \
+              --v2-signing-enabled true \
+              --v3-signing-enabled true \
+              --out "$FINAL_APK" \
+              "$ALIGNED_APK"
+          fi
+
+          rm -f "$ALIGNED_APK"
+          ls -lh "$FINAL_APK"
+          echo "apk_path=${FINAL_APK}" >> "$GITHUB_OUTPUT"
+          echo "apk_name=${FINAL_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.short_sha }}
+          path: ${{ steps.sign.outputs.apk_path }}
+          retention-days: 30

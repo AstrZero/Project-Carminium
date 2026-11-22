@@ -13,8 +13,8 @@
 
 /* ── Shared iOS Rules (iPhone + iPad) ─────────────────────────────────── */
 html[data-platform="ios"] {
-  --ios-safe-top: env(safe-area-inset-top, 0px);
-  --ios-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --ios-safe-top: var(--mobile-safe-top, env(safe-area-inset-top, 0px));
+  --ios-safe-bottom: var(--mobile-safe-bottom, env(safe-area-inset-bottom, 0px));
   --ios-safe-left: env(safe-area-inset-left, 0px);
   --ios-safe-right: env(safe-area-inset-right, 0px);
   overscroll-behavior: none;

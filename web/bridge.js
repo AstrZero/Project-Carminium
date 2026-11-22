@@ -5,8 +5,12 @@
   const isTauri = !isElectron && !!(window.__TAURI__ || window.__TAURI_INTERNALS__);
 
   if (isTauri) {
+    const isAndroid = /Android/i.test(navigator.userAgent || '');
+    window.__CARMINIUM_MOBILE__ = true;
+    window.__CARMINIUM_MOBILE_OS__ = isAndroid ? 'android' : 'ios';
     window.__CARMINIUM_PLATFORM__ = 'ios';
     document.documentElement.dataset.platform = 'ios';
+    document.documentElement.dataset.mobileOs = isAndroid ? 'android' : 'ios';
   }
 
   const _handlers = {};
@@ -122,7 +126,9 @@
     const tauriInvoke = tauriCore && tauriCore.invoke ? tauriCore.invoke.bind(tauriCore) : null;
     const tauriEvent = window.__TAURI__ && window.__TAURI__.event;
 
-    window.__coverBase = 'carminium://localhost';
+    window.__coverBase = (window.__CARMINIUM_MOBILE_OS__ === 'android')
+      ? 'http://carminium.localhost'
+      : 'carminium://localhost';
 
     window.pywebview = {
       api: new Proxy({}, {

@@ -297,13 +297,25 @@ pub fn run() {
                 log::warn!("failed to bind native iOS audio channel: {e}");
             }
 
-            // Scan Files.app-shared Documents directory in background after UI first paint
+            // Scan local music folders in background after UI first paint
             let scan_app = app.handle().clone();
             let scan_db = db.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(600)).await;
                 let _ = tauri::async_runtime::spawn_blocking(move || {
                     let _ = scanner::scan_local_folder(&scan_db, &doc_dir);
+                    #[cfg(target_os = "android")]
+                    {
+                        let android_music = std::path::PathBuf::from("/storage/emulated/0/Music");
+                        if android_music.exists() && android_music.is_dir() {
+                            if let Ok(mut rd) = fs::read_dir(&android_music) {
+                                if rd.next().is_some() {
+                                    let _ = scan_db.ensure_folder(&android_music.to_string_lossy());
+                                    let _ = scanner::scan_local_folder(&scan_db, &android_music);
+                                }
+                            }
+                        }
+                    }
                     let folders_json =
                         serde_json::to_string(&scan_db.get_folders().unwrap_or_default())
                             .unwrap_or_else(|_| "[]".to_string());
