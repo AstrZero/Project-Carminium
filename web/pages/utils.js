@@ -1113,7 +1113,10 @@
 
     var isFlexBasis = btnEl.classList.contains('np-play-pill');
     var prop  = isFlexBasis ? 'flexBasis' : 'width';
-    var base  = isFlexBasis ? 96 : 88;
+    var computed = parseFloat(window.getComputedStyle ? getComputedStyle(btnEl)[prop] : '');
+    var base  = (isFinite(computed) && computed > 0)
+      ? computed
+      : (isFlexBasis ? 96 : (btnEl.classList.contains('mini-btn-play') ? 80 : 88));
     var peak  = base + 14;
 
     var k0 = {}, k1 = {}, k2 = {};
