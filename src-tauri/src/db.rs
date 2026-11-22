@@ -1749,4 +1749,310 @@ impl LibraryDb {
         drop(conn);
         self.get_artist_override(name)
     }
+
+    /// Migrate iOS sandbox Data Container UUID paths across app updates / reinstalls.
+    ///
+    /// On iOS, every app update rotates `/var/mobile/Containers/Data/Application/<UUID>/...`
+    /// while migrating files on disk. This rewrites stored `folders.path`, `tracks.path`,
+    /// `tracks.id`, and `artist_overrides.image_path`, merges any duplicate tracks created
+    /// by prior updates without losing `play_history`, `liked_tracks`, `playlist_tracks`,
+    /// or `cover_colors`, and removes stale old-UUID default/private folder entries.
+    pub fn migrate_ios_container_paths(
+        &self,
+        doc_dir: &Path,
+        data_dir: &Path,
+    ) -> rusqlite::Result<(usize, usize)> {
+        let doc_str = doc_dir.to_string_lossy();
+        let data_str = data_dir.to_string_lossy();
+        let current_container = match extract_ios_container_root(&doc_str)
+            .or_else(|| extract_ios_container_root(&data_str))
+        {
+            Some(c) => c.to_string(),
+            None => return Ok((0, 0)),
+        };
+
+        let conn = self.conn.lock().unwrap();
+        // PRAGMA foreign_keys must be toggled OUTSIDE a transaction in SQLite.
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+
+        let tx_res: rusqlite::Result<(usize, usize)> = (|| {
+            conn.execute_batch("BEGIN IMMEDIATE;")?;
+
+            // 1. Remap or merge folders pointing to previous container UUIDs
+            let all_folders: Vec<(i64, String)> = {
+                let mut stmt = conn.prepare("SELECT id, path FROM folders ORDER BY id ASC")?;
+                let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+
+            let mut folder_remap: HashMap<i64, i64> = HashMap::new();
+            let mut stale_folder_ids: Vec<i64> = Vec::new();
+            let mut folders_removed: usize = 0;
+
+            for (fid, fpath) in &all_folders {
+                if let Some(new_path) =
+                    rewrite_ios_container_path(fpath, &current_container, &data_str)
+                {
+                    if new_path == *fpath {
+                        continue;
+                    }
+                    let existing_fid: Option<i64> = conn
+                        .query_row(
+                            "SELECT id FROM folders WHERE path = ?1",
+                            params![new_path],
+                            |r| r.get(0),
+                        )
+                        .optional()?;
+                    if let Some(target_fid) = existing_fid {
+                        if target_fid != *fid {
+                            folder_remap.insert(*fid, target_fid);
+                            stale_folder_ids.push(*fid);
+                        }
+                    } else {
+                        conn.execute(
+                            "UPDATE folders SET path = ?1 WHERE id = ?2",
+                            params![new_path, fid],
+                        )?;
+                    }
+                }
+            }
+
+            // 2. Migrate local tracks + preserve all listening data (history, likes, playlists, cover colors)
+            let local_tracks: Vec<(String, String, Option<i64>, Option<String>, Option<String>, f64)> = {
+                let mut stmt = conn.prepare(
+                    "SELECT id, path, folder_id, lyrics, alias_title, added_at \
+                     FROM tracks WHERE COALESCE(source, 'local') = 'local'",
+                )?;
+                let rows = stmt.query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<i64>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                        r.get::<_, Option<f64>>(5)?.unwrap_or(0.0),
+                    ))
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+
+            let mut tracks_migrated: usize = 0;
+            let mut cover_renames: Vec<(String, String)> = Vec::new();
+
+            for (old_id, old_path, old_fid, old_lyrics, old_alias, old_added_at) in local_tracks {
+                let rewritten =
+                    rewrite_ios_container_path(&old_path, &current_container, &data_str);
+                let remapped_fid = old_fid.and_then(|f| folder_remap.get(&f).copied());
+
+                if rewritten.is_none() && remapped_fid.is_none() {
+                    continue;
+                }
+
+                let new_path = rewritten.unwrap_or_else(|| old_path.clone());
+                let target_fid = remapped_fid.or(old_fid);
+                let new_id = md5_hex(&new_path);
+
+                // Check whether another row already occupies new_id or new_path (e.g. from an earlier update)
+                let existing_tid: Option<String> = conn
+                    .query_row(
+                        "SELECT id FROM tracks WHERE (id = ?1 OR path = ?2) AND id != ?3 LIMIT 1",
+                        params![new_id, new_path, old_id],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+
+                if let Some(target_id) = existing_tid {
+                    // Merge listening data from old_id -> target_id, then delete duplicate old_id
+                    conn.execute(
+                        "UPDATE play_history SET track_id = ?1 WHERE track_id = ?2",
+                        params![target_id, old_id],
+                    )?;
+                    conn.execute(
+                        "INSERT OR IGNORE INTO liked_tracks (track_id, liked_at) \
+                         SELECT ?1, liked_at FROM liked_tracks WHERE track_id = ?2",
+                        params![target_id, old_id],
+                    )?;
+                    conn.execute(
+                        "DELETE FROM liked_tracks WHERE track_id = ?1",
+                        params![old_id],
+                    )?;
+                    conn.execute(
+                        "DELETE FROM playlist_tracks \
+                         WHERE track_id = ?2 \
+                           AND playlist_id IN (SELECT playlist_id FROM playlist_tracks WHERE track_id = ?1)",
+                        params![target_id, old_id],
+                    )?;
+                    conn.execute(
+                        "UPDATE playlist_tracks SET track_id = ?1 WHERE track_id = ?2",
+                        params![target_id, old_id],
+                    )?;
+                    conn.execute(
+                        "INSERT OR IGNORE INTO cover_colors (track_id, colors) \
+                         SELECT ?1, colors FROM cover_colors WHERE track_id = ?2",
+                        params![target_id, old_id],
+                    )?;
+                    conn.execute(
+                        "DELETE FROM cover_colors WHERE track_id = ?1",
+                        params![old_id],
+                    )?;
+                    conn.execute(
+                        "UPDATE tracks SET \
+                            lyrics = COALESCE(NULLIF(lyrics, ''), ?1), \
+                            alias_title = COALESCE(NULLIF(alias_title, ''), ?2), \
+                            added_at = CASE WHEN ?3 > 0 AND (added_at <= 0 OR ?3 < added_at) THEN ?3 ELSE added_at END \
+                         WHERE id = ?4",
+                        params![old_lyrics, old_alias, old_added_at, target_id],
+                    )?;
+                    conn.execute("DELETE FROM tracks WHERE id = ?1", params![old_id])?;
+                    tracks_migrated += 1;
+                } else {
+                    // Direct atomic in-place rename
+                    conn.execute(
+                        "UPDATE tracks SET id = ?1, path = ?2, folder_id = ?3 WHERE id = ?4",
+                        params![new_id, new_path, target_fid, old_id],
+                    )?;
+                    if new_id != old_id {
+                        conn.execute(
+                            "UPDATE play_history SET track_id = ?1 WHERE track_id = ?2",
+                            params![new_id, old_id],
+                        )?;
+                        conn.execute(
+                            "INSERT OR IGNORE INTO liked_tracks (track_id, liked_at) \
+                             SELECT ?1, liked_at FROM liked_tracks WHERE track_id = ?2",
+                            params![new_id, old_id],
+                        )?;
+                        conn.execute(
+                            "DELETE FROM liked_tracks WHERE track_id = ?1",
+                            params![old_id],
+                        )?;
+                        conn.execute(
+                            "UPDATE OR IGNORE playlist_tracks SET track_id = ?1 WHERE track_id = ?2",
+                            params![new_id, old_id],
+                        )?;
+                        conn.execute(
+                            "DELETE FROM playlist_tracks WHERE track_id = ?1",
+                            params![old_id],
+                        )?;
+                        conn.execute(
+                            "INSERT OR IGNORE INTO cover_colors (track_id, colors) \
+                             SELECT ?1, colors FROM cover_colors WHERE track_id = ?2",
+                            params![new_id, old_id],
+                        )?;
+                        conn.execute(
+                            "DELETE FROM cover_colors WHERE track_id = ?1",
+                            params![old_id],
+                        )?;
+                        cover_renames.push((old_id, new_id));
+                    }
+                    tracks_migrated += 1;
+                }
+            }
+
+            // 3. Rewrite any custom artist avatar paths inside old container UUID
+            let overrides: Vec<(String, String)> = {
+                let mut stmt = conn.prepare(
+                    "SELECT name, image_path FROM artist_overrides \
+                     WHERE image_path IS NOT NULL AND image_path != ''",
+                )?;
+                let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for (aname, ipath) in overrides {
+                if let Some(new_ipath) =
+                    rewrite_ios_container_path(&ipath, &current_container, &data_str)
+                {
+                    if new_ipath != ipath {
+                        conn.execute(
+                            "UPDATE artist_overrides SET image_path = ?1 WHERE name = ?2",
+                            params![new_ipath, aname],
+                        )?;
+                    }
+                }
+            }
+
+            // 4. Delete merged / stale old-UUID folders so only the active container paths remain
+            for old_fid in stale_folder_ids {
+                let n = conn.execute("DELETE FROM folders WHERE id = ?1", params![old_fid])?;
+                folders_removed += n;
+            }
+            // Safety cleanup: delete any remaining folder referencing an old container UUID
+            let remaining_folders: Vec<(i64, String)> = {
+                let mut stmt = conn.prepare("SELECT id, path FROM folders")?;
+                let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for (fid, fpath) in remaining_folders {
+                if let Some(root) = extract_ios_container_root(&fpath) {
+                    if root != current_container {
+                        let n = conn.execute("DELETE FROM folders WHERE id = ?1", params![fid])?;
+                        folders_removed += n;
+                    }
+                }
+            }
+
+            conn.execute_batch("COMMIT;")?;
+
+            // Rename cached cover files on disk best-effort after commit
+            for (old_id, new_id) in cover_renames {
+                let old_cov = self.cover_cache_dir.join(format!("{old_id}.jpg"));
+                let new_cov = self.cover_cache_dir.join(format!("{new_id}.jpg"));
+                if old_cov.exists() && !new_cov.exists() {
+                    let _ = std::fs::rename(old_cov, new_cov);
+                }
+            }
+
+            Ok((tracks_migrated, folders_removed))
+        })();
+
+        if tx_res.is_err() {
+            let _ = conn.execute_batch("ROLLBACK;");
+        }
+        let _ = conn.execute_batch("PRAGMA foreign_keys = ON;");
+        tx_res
+    }
+}
+
+fn extract_ios_container_root(path_str: &str) -> Option<&str> {
+    const MARKER: &str = "/Containers/Data/Application/";
+    let idx = path_str.find(MARKER)?;
+    let after_marker = idx + MARKER.len();
+    let rest = &path_str[after_marker..];
+    let uuid_len = rest.find('/').unwrap_or(rest.len());
+    if uuid_len == 0 {
+        return None;
+    }
+    Some(&path_str[..after_marker + uuid_len])
+}
+
+fn rewrite_ios_container_path(
+    old_path: &str,
+    current_container: &str,
+    current_data_dir: &str,
+) -> Option<String> {
+    const MARKER: &str = "/Containers/Data/Application/";
+    let idx = old_path.find(MARKER)?;
+    let after_marker = idx + MARKER.len();
+    let rest_after_marker = &old_path[after_marker..];
+    let uuid_end = rest_after_marker.find('/').unwrap_or(rest_after_marker.len());
+    let old_container = &old_path[..after_marker + uuid_end];
+    if old_container == current_container {
+        return None;
+    }
+    let suffix = &rest_after_marker[uuid_end..];
+    let candidate = format!("{current_container}{suffix}");
+    if Path::new(&candidate).exists() {
+        return Some(candidate);
+    }
+    const APP_SUPPORT: &str = "/Library/Application Support/";
+    if let Some(as_idx) = suffix.find(APP_SUPPORT) {
+        let after_as = &suffix[as_idx + APP_SUPPORT.len()..];
+        if let Some(slash) = after_as.find('/') {
+            let sub = &after_as[slash..];
+            let remapped = format!("{}{}", current_data_dir.trim_end_matches('/'), sub);
+            if Path::new(&remapped).exists() {
+                return Some(remapped);
+            }
+        }
+    }
+    Some(candidate)
 }

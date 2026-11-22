@@ -264,6 +264,20 @@ pub fn run() {
                         .expect("failed to initialize fallback Carminium SQLite library")
                 }),
             );
+            #[cfg(target_os = "ios")]
+            {
+                match db.migrate_ios_container_paths(&doc_dir, &data_dir) {
+                    Ok((tracks_n, folders_n)) if tracks_n > 0 || folders_n > 0 => {
+                        log::info!(
+                            "[ios-migration] migrated {tracks_n} track(s) and cleaned {folders_n} stale container folder(s)"
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!("[ios-migration] failed: {e}");
+                    }
+                    _ => {}
+                }
+            }
             let app_settings = Arc::new(AppSettings::load(&data_dir));
             let player_state = Arc::new(PlayerState::new(&app_settings));
             let app_paths = Arc::new(AppPaths {
