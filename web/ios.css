@@ -375,6 +375,8 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   /* Compact icon-only sort button on iPhone; clicking still opens full sort menu */
   html[data-platform="ios"] #sort-select {
     position: relative;
+    width: 38px !important;
+    min-width: 0 !important;
     flex-shrink: 0;
   }
   html[data-platform="ios"] #sort-select .md-select-trigger {
@@ -467,6 +469,125 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   }
   html[data-platform="ios"] .ym-top-item-sub {
     font-size: 12px !important;
+  }
+
+  /* 6b. Detail Page Headers (Albums, Playlists, Your Mix, Artists):
+         Vertical mobile layout (cover -> badge/tag -> title -> meta -> actions), no divider */
+  html[data-platform="ios"] .detail-header:not(.hero) {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    text-align: center !important;
+    gap: 14px !important;
+    margin: 0 !important;
+    padding: 12px var(--ios-page-px) 16px !important;
+    border-bottom: none !important;
+    box-sizing: border-box !important;
+  }
+  html[data-platform="ios"] .detail-header:not(.hero) .detail-cover {
+    width: min(56vw, 216px) !important;
+    height: min(56vw, 216px) !important;
+    margin: 0 auto !important;
+  }
+  html[data-platform="ios"] .detail-header:not(.hero) .detail-meta {
+    width: 100% !important;
+    flex: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    text-align: center !important;
+    gap: 6px !important;
+    padding: 0 !important;
+  }
+  html[data-platform="ios"] .detail-header:not(.hero) .detail-name {
+    font-size: 22px !important;
+    line-height: 1.25 !important;
+    text-align: center !important;
+    margin: 0 !important;
+    word-break: break-word;
+  }
+  html[data-platform="ios"] .detail-header:not(.hero) .detail-byline,
+  html[data-platform="ios"] .detail-header:not(.hero) .detail-meta-line,
+  html[data-platform="ios"] .detail-header:not(.hero) .detail-sub,
+  html[data-platform="ios"] .detail-header:not(.hero) .playlist-owner {
+    margin: 0 !important;
+    text-align: center !important;
+    justify-content: center !important;
+    flex-wrap: wrap;
+  }
+  html[data-platform="ios"] .detail-header:not(.hero) .detail-alias {
+    justify-content: center !important;
+    margin-top: 2px !important;
+  }
+  html[data-platform="ios"] .detail-header:not(.hero) .detail-actions {
+    width: 100% !important;
+    justify-content: center !important;
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+    margin-top: 8px !important;
+  }
+  html[data-platform="ios"] .detail-header .detail-play-btn {
+    height: 44px !important;
+    padding: 0 20px !important;
+    font-size: 14px !important;
+  }
+  html[data-platform="ios"] .detail-header .detail-icon-btn {
+    width: 44px !important;
+    height: 44px !important;
+  }
+  html[data-platform="ios"] .detail-header.hero {
+    border-bottom: none !important;
+  }
+  html[data-platform="ios"] .playlist-search-wrapper {
+    padding: 0 0 4px !important;
+  }
+  html[data-platform="ios"] .ym-mix-detail-header {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    text-align: center !important;
+    gap: 14px !important;
+    padding: 12px var(--ios-page-px) 16px !important;
+    margin: 0 !important;
+    border-bottom: none !important;
+    box-sizing: border-box !important;
+  }
+  html[data-platform="ios"] .ym-mix-detail-cover {
+    width: min(56vw, 216px) !important;
+    height: min(56vw, 216px) !important;
+    margin: 0 auto !important;
+  }
+  html[data-platform="ios"] .ym-mix-detail-meta {
+    width: 100% !important;
+    flex: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    text-align: center !important;
+    gap: 6px !important;
+    padding-bottom: 0 !important;
+  }
+  html[data-platform="ios"] .ym-mix-detail-badge {
+    margin: 0 !important;
+  }
+  html[data-platform="ios"] .ym-mix-detail-title {
+    font-size: 22px !important;
+    line-height: 1.25 !important;
+    white-space: normal !important;
+    text-align: center !important;
+    margin: 0 !important;
+    word-break: break-word;
+  }
+  html[data-platform="ios"] .ym-mix-detail-sub {
+    margin: 0 !important;
+    text-align: center !important;
+  }
+  html[data-platform="ios"] .ym-mix-detail-actions {
+    width: 100% !important;
+    justify-content: center !important;
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+    margin-top: 8px !important;
   }
 
   /* 7. Now Playing Sheet on iPhone:
@@ -729,6 +850,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   }
 
   /* 8. Settings Page on iPhone: 2-level navigation (Category List -> Detail Page)
+        + unified --ios-page-px (16px) horizontal margins with zero double-inset
         + 2-line layout for rows with wide controls (buttons/selects/inputs/sliders) */
   html[data-platform="ios"] .settings-page {
     position: relative !important;
@@ -737,6 +859,10 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     width: 100% !important;
     height: auto !important;
     min-height: 100%;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
     overflow: visible !important;
     box-sizing: border-box !important;
   }
@@ -757,7 +883,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     display: none !important;
   }
   html[data-platform="ios"] .settings-nav-header {
-    padding: 6px 4px 14px !important;
+    padding: 6px 0 14px !important;
     box-sizing: border-box !important;
   }
   html[data-platform="ios"] .settings-nav-header-title {
@@ -813,6 +939,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     display: none !important;
   }
   html[data-platform="ios"] body.ios-settings-detail .settings-content {
+    --md-comp-seglist-inset: 0px;
     display: block !important;
     flex: 1 1 auto;
     width: 100% !important;
@@ -820,6 +947,22 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     padding: 8px var(--ios-page-px) 28px !important;
     overflow: visible !important;
     box-sizing: border-box !important;
+  }
+  html[data-platform="ios"] .settings-content .md-seglist,
+  html[data-platform="ios"] .settings-content .settings-group,
+  html[data-platform="ios"] .settings-content .settings-notice,
+  html[data-platform="ios"] .settings-content .settings-memory-info {
+    margin-inline: 0 !important;
+  }
+  html[data-platform="ios"] .settings-content .settings-group-header {
+    padding: 20px 4px 8px !important;
+  }
+  html[data-platform="ios"] .settings-content .settings-group-header:first-child {
+    padding-top: 4px !important;
+  }
+  html[data-platform="ios"] .settings-content .about-page {
+    padding: 0 !important;
+    margin: 0 !important;
   }
   html[data-platform="ios"] .settings-group,
   html[data-platform="ios"] .settings-row {
