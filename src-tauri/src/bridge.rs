@@ -106,15 +106,16 @@ pub async fn dispatch_bridge<R: Runtime>(
     let paths = app.state::<Arc<AppPaths>>().inner().clone();
 
     let sep = settings.get_str("artist_separators", ";");
+    let smart_albums = settings.get_bool("album_smart_grouping", true);
 
     let result: Value = match method.as_str() {
         // ── Library & Browsing ──────────────────────────────────────
         "get_library" => {
-            let tracks = db.get_all_tracks().unwrap_or_default();
+            let tracks = db.get_all_tracks_json(&sep).unwrap_or_default();
             dump(&tracks)
         }
         "get_albums" => {
-            let albums = db.get_albums().unwrap_or_default();
+            let albums = db.get_albums(&sep, smart_albums).unwrap_or_default();
             dump(&albums)
         }
         "get_artists" => {
@@ -130,7 +131,20 @@ pub async fn dispatch_bridge<R: Runtime>(
             let parsed: Value = serde_json::from_str(&raw).unwrap_or_else(|_| json!({}));
             let album = parsed["album"].as_str().unwrap_or("");
             let aa = parsed["album_artist"].as_str();
-            let tracks = db.get_album_tracks(album, aa).unwrap_or_default();
+            let album_keys: Option<Vec<(String, String)>> = parsed["album_keys"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|k| {
+                            let ka = k["album"].as_str()?.to_string();
+                            let kaa = k["album_artist"].as_str().unwrap_or("").to_string();
+                            Some((ka, kaa))
+                        })
+                        .collect()
+                });
+            let tracks = db
+                .get_album_tracks(album, aa, album_keys.as_deref())
+                .unwrap_or_default();
             dump(&tracks)
         }
         "get_artist_tracks" => {
@@ -392,14 +406,14 @@ pub async fn dispatch_bridge<R: Runtime>(
             emit_bridge(
                 &app,
                 "liked_albums_changed",
-                dump(&db.get_liked_albums().unwrap_or_default()),
+                dump(&db.get_liked_albums(&sep, smart_albums).unwrap_or_default()),
             );
             Value::Bool(liked)
         }
         "is_album_liked" => {
             Value::Bool(db.is_album_liked(&arg_str(&args, 0), &arg_str(&args, 1)))
         }
-        "get_liked_albums" => dump(&db.get_liked_albums().unwrap_or_default()),
+        "get_liked_albums" => dump(&db.get_liked_albums(&sep, smart_albums).unwrap_or_default()),
 
         // ── History & Discover ──────────────────────────────────────
         "get_play_history" => {
@@ -411,8 +425,8 @@ pub async fn dispatch_bridge<R: Runtime>(
             emit_bridge(&app, "history_changed", Value::String("[]".to_string()));
             Value::Null
         }
-        "get_play_stats" => dump(&db.get_play_stats().unwrap_or_else(|_| json!({}))),
-        "get_daily_mixes" => dump(&db.get_daily_mixes().unwrap_or_default()),
+        "get_play_stats" => dump(&db.get_play_stats(&sep).unwrap_or_else(|_| json!({}))),
+        "get_daily_mixes" => dump(&db.get_daily_mixes(&sep).unwrap_or_default()),
         "get_explore_tracks" => dump(&db.get_explore_tracks(30).unwrap_or_else(|_| json!({}))),
         "get_similar_recommendations" => dump(&Vec::<Value>::new()),
 
@@ -748,9 +762,14 @@ pub async fn dispatch_bridge<R: Runtime>(
         "save_settings" => {
             let raw = arg_str(&args, 0);
             if let Ok(Value::Object(patch)) = serde_json::from_str::<Value>(&raw) {
+                let affects_library = patch.contains_key("artist_separators")
+                    || patch.contains_key("album_smart_grouping");
                 settings.update(&patch);
                 let all_json = dump(&settings.all());
                 emit_bridge(&app, "settings_changed", all_json);
+                if affects_library {
+                    emit_bridge(&app, "library_updated", json!(""));
+                }
             }
             Value::Null
         }

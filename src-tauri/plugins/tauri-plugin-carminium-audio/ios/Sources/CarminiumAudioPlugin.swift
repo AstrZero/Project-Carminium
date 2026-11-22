@@ -209,6 +209,7 @@ class CarminiumAudioPlugin: Plugin {
       self.currentMetadata = nil
       self.currentDurationMs = 0
       MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+      MPNowPlayingInfoCenter.default().playbackState = .stopped
       self.sendStateEvent("stopped")
       invoke.resolve()
     }
@@ -355,11 +356,13 @@ class CarminiumAudioPlugin: Plugin {
     if self.player == nil {
       let p = AVPlayer(playerItem: item)
       p.automaticallyWaitsToMinimizeStalling = true
+      p.allowsExternalPlayback = false
       p.volume = self.volumeLevel
       self.player = p
       installPeriodicTimeObserver(on: p)
     } else {
       self.player?.replaceCurrentItem(with: item)
+      self.player?.allowsExternalPlayback = false
       self.player?.volume = self.volumeLevel
     }
 
@@ -383,6 +386,7 @@ class CarminiumAudioPlugin: Plugin {
         case .failed:
           let msg = observedItem.error?.localizedDescription ?? "AVPlayerItem failed to load"
           self.isPlayingState = false
+          self.updateNowPlayingPlaybackState(isPlaying: false)
           self.sendErrorEvent(msg, trackId: self.currentTrackId)
           self.sendStateEvent("paused")
         default:
@@ -505,7 +509,16 @@ class CarminiumAudioPlugin: Plugin {
     let session = AVAudioSession.sharedInstance()
     do {
       if !audioSessionConfigured {
-        try session.setCategory(.playback, mode: .default, options: [])
+        do {
+          try session.setCategory(
+            .playback,
+            mode: .default,
+            policy: .longFormAudio,
+            options: []
+          )
+        } catch {
+          try session.setCategory(.playback, mode: .default, options: [])
+        }
         audioSessionConfigured = true
       }
       try session.setActive(true)
@@ -528,6 +541,19 @@ class CarminiumAudioPlugin: Plugin {
       name: AVAudioSession.routeChangeNotification,
       object: AVAudioSession.sharedInstance()
     )
+    nc.addObserver(
+      self,
+      selector: #selector(handleAppDidBecomeActive(_:)),
+      name: UIApplication.didBecomeActiveNotification,
+      object: nil
+    )
+  }
+
+  @objc private func handleAppDidBecomeActive(_ notification: Notification) {
+    runOnMain {
+      guard self.currentMetadata != nil else { return }
+      self.updateNowPlayingPlaybackState(isPlaying: self.isPlayingState)
+    }
   }
 
   @objc private func handleAudioInterruption(_ notification: Notification) {
@@ -590,6 +616,10 @@ class CarminiumAudioPlugin: Plugin {
   private func ensureRemoteCommandsConfigured() {
     if remoteCommandsConfigured { return }
     remoteCommandsConfigured = true
+
+    #if os(iOS)
+    UIApplication.shared.beginReceivingRemoteControlEvents()
+    #endif
 
     let cc = MPRemoteCommandCenter.shared()
 
@@ -654,6 +684,9 @@ class CarminiumAudioPlugin: Plugin {
     let elapsedSec = currentPositionSeconds()
     info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsedSec
     info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(self.playbackRate) : 0.0
+    info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
+    info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
+    info[MPNowPlayingInfoPropertyIsLiveStream] = false
 
     #if os(iOS)
     if let artPath = metadata.artworkPath, !artPath.isEmpty,
@@ -665,18 +698,28 @@ class CarminiumAudioPlugin: Plugin {
     }
     #endif
 
-    MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    let center = MPNowPlayingInfoCenter.default()
+    center.nowPlayingInfo = info
+    center.playbackState = isPlaying ? .playing : .paused
   }
 
   private func updateNowPlayingPlaybackState(isPlaying: Bool, overrideElapsedSec: Double? = nil) {
-    guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+    let center = MPNowPlayingInfoCenter.default()
+    guard var info = center.nowPlayingInfo else {
+      center.playbackState = isPlaying ? .playing : .paused
+      return
+    }
     let durSec = currentEffectiveDurationMs() / 1000.0
     if durSec > 0 {
       info[MPMediaItemPropertyPlaybackDuration] = durSec
     }
     info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = overrideElapsedSec ?? currentPositionSeconds()
     info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(self.playbackRate) : 0.0
-    MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
+    info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
+    info[MPNowPlayingInfoPropertyIsLiveStream] = false
+    center.nowPlayingInfo = info
+    center.playbackState = isPlaying ? .playing : .paused
   }
 
   private func currentPositionSeconds() -> Double {

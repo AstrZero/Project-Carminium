@@ -77,6 +77,155 @@ fn make_sort_key(text: &str) -> String {
     text.trim().to_lowercase()
 }
 
+fn make_first_letter(text: &str) -> String {
+    match text.trim().chars().next() {
+        Some(c) if c.is_ascii_alphabetic() => c.to_ascii_uppercase().to_string(),
+        _ => "#".to_string(),
+    }
+}
+
+fn normalize_nfkc_lite(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\u{3000}' => out.push(' '),
+            '\u{FF01}'..='\u{FF5E}' => {
+                if let Some(ascii) = char::from_u32(c as u32 - 0xFEE0) {
+                    out.push(ascii);
+                } else {
+                    out.push(c);
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn normalize_album_title(raw: &str) -> String {
+    normalize_nfkc_lite(raw)
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn replace_feat_patterns(raw: &str) -> String {
+    const FEAT_PATTERNS: [&str; 4] = ["feat.", "ft.", "vs.", "with"];
+    let mut out = String::with_capacity(raw.len());
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let mut matched = false;
+        let prev_ok = i == 0
+            || !raw[..i]
+                .chars()
+                .next_back()
+                .map(|c| c.is_ascii_alphanumeric())
+                .unwrap_or(false);
+        if prev_ok {
+            for pat in &FEAT_PATTERNS {
+                let end = i + pat.len();
+                if end < bytes.len()
+                    && raw.is_char_boundary(i)
+                    && raw.is_char_boundary(end)
+                    && raw[i..end].eq_ignore_ascii_case(pat)
+                {
+                    if let Some(next_ch) = raw[end..].chars().next() {
+                        if next_ch == ' ' || next_ch == '\u{3000}' {
+                            while out.ends_with(' ') || out.ends_with('\u{3000}') {
+                                out.pop();
+                            }
+                            out.push('\0');
+                            i = end;
+                            while i < bytes.len() {
+                                if let Some(ch) = raw[i..].chars().next() {
+                                    if ch == ' ' || ch == '\u{3000}' {
+                                        i += ch.len_utf8();
+                                        continue;
+                                    }
+                                }
+                                break;
+                            }
+                            matched = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if !matched {
+            if let Some(ch) = raw[i..].chars().next() {
+                out.push(ch);
+                i += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+    }
+    out
+}
+
+pub fn split_artists(raw: &str, separators: &str) -> Vec<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let seps = if separators.is_empty() { ";" } else { separators };
+    let sep_chars: Vec<char> = seps.chars().collect();
+    let text = replace_feat_patterns(trimmed);
+    let mut result = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for part in text.split(|c| c == '\0' || sep_chars.contains(&c)) {
+        let name = part.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let key = name.to_lowercase();
+        if seen.insert(key) {
+            result.push(name.to_string());
+        }
+    }
+    result
+}
+
+fn is_unknown_artist_key(lower: &str) -> bool {
+    matches!(
+        lower,
+        "未知艺术家"
+            | "unknown artist"
+            | "[unknown artist]"
+            | "未知アーティスト"
+            | "неизвестный исполнитель"
+    )
+}
+
+fn album_artist_tokens(raw: &str, separators: &str) -> Vec<String> {
+    let norm = normalize_nfkc_lite(raw).to_lowercase();
+    let trimmed = norm.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let text = replace_feat_patterns(trimmed).replace(" x ", "\0");
+    let extra_seps: Vec<char> = separators.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut out = Vec::new();
+    for part in text.split(|c| {
+        matches!(
+            c,
+            ';' | '；' | ',' | '，' | '/' | '、' | '•' | '·' | '・' | '&' | '\0'
+        ) || extra_seps.contains(&c)
+    }) {
+        let p = part.trim();
+        if p.is_empty() || is_unknown_artist_key(p) {
+            continue;
+        }
+        if !out.iter().any(|existing: &String| existing == p) {
+            out.push(p.to_string());
+        }
+    }
+    out
+}
+
 fn row_to_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
     let title: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
     let artist: String = row.get::<_, Option<String>>(4)?.unwrap_or_default();
@@ -428,6 +577,24 @@ impl LibraryDb {
         rows.collect()
     }
 
+    pub fn get_all_tracks_json(&self, separators: &str) -> rusqlite::Result<Vec<Value>> {
+        let tracks = self.get_all_tracks()?;
+        let out = tracks
+            .into_iter()
+            .map(|t| {
+                let artists = split_artists(&t.artist, separators);
+                let sort_letter = make_first_letter(&t.title);
+                let mut v = serde_json::to_value(&t).unwrap_or_else(|_| json!({}));
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("artists".to_string(), json!(artists));
+                    obj.insert("sort_letter".to_string(), json!(sort_letter));
+                }
+                v
+            })
+            .collect();
+        Ok(out)
+    }
+
     pub fn get_track(&self, id: &str) -> rusqlite::Result<Option<Track>> {
         let conn = self.conn.lock().unwrap();
         let sql = format!("{TRACK_SELECT} WHERE id = ?1");
@@ -460,10 +627,18 @@ impl LibraryDb {
 
     // ── Albums & Artists Aggregation ────────────────────────────────
 
-    pub fn get_albums(&self) -> rusqlite::Result<Vec<Value>> {
+    pub fn get_albums(&self, separators: &str, smart_grouping: bool) -> rusqlite::Result<Vec<Value>> {
+        struct RawAlbumGroup {
+            album: String,
+            album_artist: String,
+            track_count: i64,
+            years: Vec<i64>,
+            cover_track_id: Option<String>,
+            total_duration_ms: i64,
+        }
+
         let tracks = self.get_all_tracks()?;
-        let mut map: HashMap<(String, String), (i64, Option<i64>, Option<String>, i64, String)> =
-            HashMap::new();
+        let mut map: HashMap<(String, String), RawAlbumGroup> = HashMap::new();
         for t in tracks {
             let album = if t.album.trim().is_empty() {
                 "未知专辑".to_string()
@@ -479,32 +654,157 @@ impl LibraryDb {
             };
             let entry = map
                 .entry((album.clone(), aa.clone()))
-                .or_insert_with(|| (0, t.year, None, 0, aa.clone()));
-            entry.0 += 1;
-            if entry.1.is_none() {
-                entry.1 = t.year;
+                .or_insert_with(|| RawAlbumGroup {
+                    album,
+                    album_artist: aa,
+                    track_count: 0,
+                    years: Vec::new(),
+                    cover_track_id: None,
+                    total_duration_ms: 0,
+                });
+            entry.track_count += 1;
+            if let Some(y) = t.year {
+                if y > 0 && !entry.years.contains(&y) {
+                    entry.years.push(y);
+                }
             }
-            if entry.2.is_none() && t.has_cover != 0 {
-                entry.2 = Some(t.id.clone());
+            if entry.cover_track_id.is_none() && t.has_cover != 0 {
+                entry.cover_track_id = Some(t.id.clone());
             }
-            entry.3 += t.duration_ms;
+            entry.total_duration_ms += t.duration_ms;
         }
-        let mut list: Vec<Value> = map
+
+        let raw_groups: Vec<RawAlbumGroup> = map.into_values().collect();
+        let clusters: Vec<Vec<RawAlbumGroup>> = if smart_grouping {
+            let mut buckets: HashMap<String, Vec<RawAlbumGroup>> = HashMap::new();
+            for g in raw_groups {
+                let key = normalize_album_title(&g.album);
+                buckets.entry(key).or_default().push(g);
+            }
+            let mut out = Vec::new();
+            for bucket in buckets.into_values() {
+                let n = bucket.len();
+                if n < 2 {
+                    out.push(bucket);
+                    continue;
+                }
+                let mut parent: Vec<usize> = (0..n).collect();
+                let find = |parent: &mut Vec<usize>, mut i: usize| -> usize {
+                    while parent[i] != i {
+                        parent[i] = parent[parent[i]];
+                        i = parent[i];
+                    }
+                    i
+                };
+                let tokens: Vec<Vec<String>> = bucket
+                    .iter()
+                    .map(|g| album_artist_tokens(&g.album_artist, separators))
+                    .collect();
+
+                for i in 0..n {
+                    for j in (i + 1)..n {
+                        let yi = &bucket[i].years;
+                        let yj = &bucket[j].years;
+                        if !yi.is_empty() && !yj.is_empty() && !yi.iter().any(|y| yj.contains(y)) {
+                            continue;
+                        }
+                        if !tokens[i].iter().any(|tok| tokens[j].contains(tok)) {
+                            continue;
+                        }
+                        let ra = find(&mut parent, i);
+                        let rb = find(&mut parent, j);
+                        if ra != rb {
+                            parent[rb] = ra;
+                        }
+                    }
+                }
+
+                let mut by_root: HashMap<usize, Vec<RawAlbumGroup>> = HashMap::new();
+                for (i, g) in bucket.into_iter().enumerate() {
+                    let root = find(&mut parent, i);
+                    by_root.entry(root).or_default().push(g);
+                }
+                for group_members in by_root.into_values() {
+                    out.push(group_members);
+                }
+            }
+            out
+        } else {
+            raw_groups.into_iter().map(|g| vec![g]).collect()
+        };
+
+        let mut list: Vec<Value> = clusters
             .into_iter()
-            .map(|((album, album_artist), (count, year, cover_track_id, dur, artist))| {
-                let sk = make_sort_key(&album);
-                json!({
-                    "album": album,
-                    "album_artist": album_artist,
-                    "artist": artist,
-                    "track_count": count,
+            .filter_map(|mut members| {
+                if members.is_empty() {
+                    return None;
+                }
+                members.sort_by(|a, b| {
+                    b.track_count
+                        .cmp(&a.track_count)
+                        .then_with(|| a.album_artist.cmp(&b.album_artist))
+                });
+                let primary_album = members[0].album.clone();
+                let primary_artist = members[0].album_artist.clone();
+                let primary_year = members[0].years.first().copied();
+
+                let mut artists: Vec<String> = Vec::new();
+                let mut keys: Vec<Value> = Vec::new();
+                let mut year_votes: HashMap<i64, i64> = HashMap::new();
+                let mut track_count: i64 = 0;
+                let mut total_duration_ms: i64 = 0;
+                let mut cover_track_id: Option<String> = None;
+
+                for m in members {
+                    track_count += m.track_count;
+                    total_duration_ms += m.total_duration_ms;
+                    if !artists.contains(&m.album_artist) {
+                        artists.push(m.album_artist.clone());
+                    }
+                    keys.push(json!({
+                        "album": m.album,
+                        "album_artist": m.album_artist,
+                    }));
+                    for y in m.years {
+                        *year_votes.entry(y).or_insert(0) += m.track_count;
+                    }
+                    if cover_track_id.is_none() && m.cover_track_id.is_some() {
+                        cover_track_id = m.cover_track_id;
+                    }
+                }
+
+                let year = primary_year.or_else(|| {
+                    year_votes
+                        .into_iter()
+                        .max_by_key(|(_, votes)| *votes)
+                        .map(|(y, _)| y)
+                });
+
+                let artists_text = artists.join(" · ");
+                let artist_count = artists.len();
+                let sk = make_sort_key(&primary_album);
+                let aa_sk = make_sort_key(&primary_artist);
+                let sort_letter = make_first_letter(&primary_album);
+
+                Some(json!({
+                    "album": primary_album,
+                    "album_artist": primary_artist,
+                    "artist": primary_artist,
+                    "album_artists": artists,
+                    "album_artists_text": artists_text,
+                    "album_keys": keys,
+                    "artist_count": artist_count,
+                    "track_count": track_count,
                     "year": year,
                     "cover_track_id": cover_track_id,
-                    "total_duration_ms": dur,
+                    "total_duration_ms": total_duration_ms,
                     "sort_key": sk,
-                })
+                    "album_artist_sort_key": aa_sk,
+                    "sort_letter": sort_letter,
+                }))
             })
             .collect();
+
         list.sort_by(|a, b| {
             a["sort_key"]
                 .as_str()
@@ -518,22 +818,17 @@ impl LibraryDb {
         &self,
         album: &str,
         album_artist: Option<&str>,
+        album_keys: Option<&[(String, String)]>,
     ) -> rusqlite::Result<Vec<Track>> {
         let all = self.get_all_tracks()?;
-        let target_album = album.trim();
-        let target_aa = album_artist.map(|s| s.trim()).filter(|s| !s.is_empty());
-        let mut out: Vec<Track> = all
-            .into_iter()
-            .filter(|t| {
-                let al = if t.album.trim().is_empty() {
-                    "未知专辑"
-                } else {
-                    t.album.trim()
-                };
-                if al != target_album {
-                    return false;
-                }
-                if let Some(aa) = target_aa {
+        let mut out: Vec<Track> = if let Some(keys) = album_keys.filter(|k| !k.is_empty()) {
+            all.into_iter()
+                .filter(|t| {
+                    let al = if t.album.trim().is_empty() {
+                        "未知专辑"
+                    } else {
+                        t.album.trim()
+                    };
                     let t_aa = if !t.album_artist.trim().is_empty() {
                         t.album_artist.trim()
                     } else if !t.artist.trim().is_empty() {
@@ -541,35 +836,51 @@ impl LibraryDb {
                     } else {
                         "未知艺术家"
                     };
-                    t_aa == aa
-                } else {
-                    true
-                }
-            })
-            .collect();
+                    keys.iter()
+                        .any(|(ka, kaa)| ka.trim() == al && (kaa.trim().is_empty() || kaa.trim() == t_aa))
+                })
+                .collect()
+        } else {
+            let target_album = album.trim();
+            let target_aa = album_artist.map(|s| s.trim()).filter(|s| !s.is_empty());
+            all.into_iter()
+                .filter(|t| {
+                    let al = if t.album.trim().is_empty() {
+                        "未知专辑"
+                    } else {
+                        t.album.trim()
+                    };
+                    if al != target_album {
+                        return false;
+                    }
+                    if let Some(aa) = target_aa {
+                        let t_aa = if !t.album_artist.trim().is_empty() {
+                            t.album_artist.trim()
+                        } else if !t.artist.trim().is_empty() {
+                            t.artist.trim()
+                        } else {
+                            "未知艺术家"
+                        };
+                        t_aa == aa
+                    } else {
+                        true
+                    }
+                })
+                .collect()
+        };
         out.sort_by_key(|t| (t.disc_number.unwrap_or(1), t.track_number.unwrap_or(9999)));
         Ok(out)
     }
 
     pub fn get_artists(&self, separators: &str) -> rusqlite::Result<Vec<Value>> {
         let tracks = self.get_all_tracks()?;
-        let sep_chars: Vec<char> = separators.chars().filter(|c| !c.is_whitespace()).collect();
         let mut map: HashMap<String, (i64, HashSet<String>, Option<String>)> = HashMap::new();
 
         for t in tracks {
-            let raw = if t.artist.trim().is_empty() {
-                "未知艺术家"
-            } else {
-                t.artist.trim()
-            };
-            let parts: Vec<String> = if sep_chars.is_empty() {
-                vec![raw.to_string()]
-            } else {
-                raw.split(|c| sep_chars.contains(&c))
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            };
+            let mut parts = split_artists(&t.artist, separators);
+            if parts.is_empty() {
+                parts.push("未知艺术家".to_string());
+            }
             for name in parts {
                 let entry = map
                     .entry(name)
@@ -588,6 +899,7 @@ impl LibraryDb {
             .into_iter()
             .map(|(name, (count, albums, cover_track_id))| {
                 let sk = make_sort_key(&name);
+                let sort_letter = make_first_letter(&name);
                 json!({
                     "artist": name,
                     "name": name,
@@ -595,6 +907,7 @@ impl LibraryDb {
                     "album_count": albums.len(),
                     "cover_track_id": cover_track_id,
                     "sort_key": sk,
+                    "sort_letter": sort_letter,
                 })
             })
             .collect();
@@ -610,24 +923,15 @@ impl LibraryDb {
     pub fn get_artist_tracks(&self, artist: &str, separators: &str) -> rusqlite::Result<Vec<Track>> {
         let tracks = self.get_all_tracks()?;
         let target = artist.trim();
-        let sep_chars: Vec<char> = separators.chars().filter(|c| !c.is_whitespace()).collect();
+        let target_lower = target.to_lowercase();
         Ok(tracks
             .into_iter()
             .filter(|t| {
-                let raw = if t.artist.trim().is_empty() {
-                    "未知艺术家"
-                } else {
-                    t.artist.trim()
-                };
-                if raw == target {
-                    return true;
+                let mut parts = split_artists(&t.artist, separators);
+                if parts.is_empty() {
+                    parts.push("未知艺术家".to_string());
                 }
-                if !sep_chars.is_empty() {
-                    raw.split(|c| sep_chars.contains(&c))
-                        .any(|s| s.trim() == target)
-                } else {
-                    false
-                }
+                parts.iter().any(|p| p == target || p.to_lowercase() == target_lower)
             })
             .collect())
     }
@@ -784,7 +1088,11 @@ impl LibraryDb {
         .unwrap_or(false)
     }
 
-    pub fn get_liked_albums(&self) -> rusqlite::Result<Vec<Value>> {
+    pub fn get_liked_albums(
+        &self,
+        separators: &str,
+        smart_grouping: bool,
+    ) -> rusqlite::Result<Vec<Value>> {
         let keys: Vec<(String, String)> = {
             let conn = self.conn.lock().unwrap();
             let mut stmt = conn.prepare(
@@ -796,21 +1104,31 @@ impl LibraryDb {
                 .collect();
             out
         };
-        let all = self.get_albums()?;
-        let mut by_key: HashMap<(String, String), Value> = all
-            .into_iter()
-            .map(|v| {
-                let k = (
-                    v["album"].as_str().unwrap_or("").to_string(),
-                    v["album_artist"].as_str().unwrap_or("").to_string(),
-                );
-                (k, v)
-            })
-            .collect();
+        let all = self.get_albums(separators, smart_grouping)?;
+        let mut by_key: HashMap<(String, String), usize> = HashMap::new();
+        for (idx, v) in all.iter().enumerate() {
+            let primary = (
+                v["album"].as_str().unwrap_or("").to_string(),
+                v["album_artist"].as_str().unwrap_or("").to_string(),
+            );
+            by_key.entry(primary).or_insert(idx);
+            if let Some(arr) = v["album_keys"].as_array() {
+                for item in arr {
+                    let k = (
+                        item["album"].as_str().unwrap_or("").to_string(),
+                        item["album_artist"].as_str().unwrap_or("").to_string(),
+                    );
+                    by_key.entry(k).or_insert(idx);
+                }
+            }
+        }
+        let mut used: HashSet<usize> = HashSet::new();
         let mut out = Vec::new();
         for k in keys {
-            if let Some(v) = by_key.remove(&k) {
-                out.push(v);
+            if let Some(&idx) = by_key.get(&k) {
+                if used.insert(idx) {
+                    out.push(all[idx].clone());
+                }
             }
         }
         Ok(out)
@@ -855,7 +1173,7 @@ impl LibraryDb {
         Ok(())
     }
 
-    pub fn get_play_stats(&self) -> rusqlite::Result<Value> {
+    pub fn get_play_stats(&self, separators: &str) -> rusqlite::Result<Value> {
         let conn = self.conn.lock().unwrap();
         let total_plays: i64 =
             conn.query_row("SELECT COUNT(*) FROM play_history", [], |r| r.get(0))?;
@@ -897,20 +1215,30 @@ impl LibraryDb {
 
         let top_artists: Vec<Value> = {
             let mut stmt = conn.prepare(
-                "SELECT COALESCE(NULLIF(TRIM(t.artist), ''), '未知艺术家') AS name, \
-                 COUNT(*) AS play_count \
-                 FROM play_history h JOIN tracks t ON t.id = h.track_id \
-                 GROUP BY name ORDER BY play_count DESC LIMIT 5",
+                "SELECT COALESCE(t.artist, '') \
+                 FROM play_history h JOIN tracks t ON t.id = h.track_id",
             )?;
-            let out: Vec<Value> = stmt
-                .query_map([], |r| {
-                    let name: String = r.get(0)?;
-                    let play_count: i64 = r.get(1)?;
-                    Ok(json!({ "name": name, "play_count": play_count }))
-                })?
+            let raw_rows: Vec<String> = stmt
+                .query_map([], |r| r.get::<_, String>(0))?
                 .filter_map(|r| r.ok())
                 .collect();
-            out
+            let mut counts: HashMap<String, i64> = HashMap::new();
+            for raw in raw_rows {
+                let mut names = split_artists(&raw, separators);
+                if names.is_empty() {
+                    names.push("未知艺术家".to_string());
+                }
+                for name in names {
+                    *counts.entry(name).or_insert(0) += 1;
+                }
+            }
+            let mut pairs: Vec<(String, i64)> = counts.into_iter().collect();
+            pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            pairs
+                .into_iter()
+                .take(5)
+                .map(|(name, play_count)| json!({ "name": name, "play_count": play_count }))
+                .collect()
         };
 
         let top_albums: Vec<Value> = {
@@ -944,19 +1272,17 @@ impl LibraryDb {
         }))
     }
 
-    pub fn get_daily_mixes(&self) -> rusqlite::Result<Vec<Value>> {
+    pub fn get_daily_mixes(&self, separators: &str) -> rusqlite::Result<Vec<Value>> {
         let tracks = self.get_all_tracks()?;
         if tracks.is_empty() {
             return Ok(Vec::new());
         }
         let mut by_artist: HashMap<String, Vec<Track>> = HashMap::new();
         for t in tracks {
-            let artist = if t.artist.trim().is_empty() {
-                continue;
-            } else {
-                t.artist.trim().to_string()
-            };
-            by_artist.entry(artist).or_default().push(t);
+            let names = split_artists(&t.artist, separators);
+            for artist in names {
+                by_artist.entry(artist).or_default().push(t.clone());
+            }
         }
         let mut pairs: Vec<(String, Vec<Track>)> = by_artist
             .into_iter()

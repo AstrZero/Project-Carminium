@@ -569,11 +569,18 @@ impl PlayerState {
                 }
             }
             NativeAudioEvent::State { status, .. } => {
-                {
+                let changed = {
                     let mut inner = self.inner.lock().unwrap();
-                    inner.state = status.clone();
+                    if inner.state == status {
+                        false
+                    } else {
+                        inner.state = status.clone();
+                        true
+                    }
+                };
+                if changed {
+                    emit_bridge(app, "playback_state_changed", json!(status));
                 }
-                emit_bridge(app, "playback_state_changed", json!(status));
             }
             NativeAudioEvent::Ended { .. } => {
                 self.next_track(app, db, true);
