@@ -1206,14 +1206,136 @@
     }
 
     // Tap Mini Player body -> open fullscreen Now Playing directly (no right sidebar)
+    // Swipe left/right on Mini Player -> next / previous track (Apple Music / Spotify style)
     var mini = document.getElementById('mini-player');
     if (mini) {
+      var miniSwipeSuppressClickUntil = 0;
+
       mini.addEventListener('click', function (e) {
         if (!_isPhone()) return;
+        if (Date.now() < miniSwipeSuppressClickUntil) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
         if (e.target.closest('button')) return;
         e.stopImmediatePropagation();
         _openPhoneNowPlaying();
       }, true);
+
+      var mActive = false;
+      var mLocked = false;
+      var mStartX = 0;
+      var mStartY = 0;
+      var mStartTime = 0;
+      var mLastDx = 0;
+      var mSlideTimer = null;
+
+      mini.addEventListener('touchstart', function (e) {
+        if (!_isPhone() || e.touches.length !== 1) return;
+        if (e.target.closest('.mini-player-controls button')) return;
+        var t = e.touches[0];
+        mActive = true;
+        mLocked = false;
+        mStartX = t.clientX;
+        mStartY = t.clientY;
+        mStartTime = Date.now();
+        mLastDx = 0;
+      }, { passive: true });
+
+      mini.addEventListener('touchmove', function (e) {
+        if (!mActive || e.touches.length !== 1) return;
+        var leftEl = mini.querySelector('.mini-player-left');
+        if (!leftEl) return;
+        var t = e.touches[0];
+        var dx = t.clientX - mStartX;
+        var dy = Math.abs(t.clientY - mStartY);
+
+        if (!mLocked) {
+          if (dy > 14 && dy > Math.abs(dx)) {
+            mActive = false;
+            return;
+          }
+          if (Math.abs(dx) > 10 && Math.abs(dx) > dy * 1.2) {
+            mLocked = true;
+            if (mSlideTimer) { clearTimeout(mSlideTimer); mSlideTimer = null; }
+            leftEl.style.transition = 'none';
+          } else {
+            return;
+          }
+        }
+
+        if (e.cancelable) e.preventDefault();
+        mLastDx = dx;
+        var damped = Math.max(-88, Math.min(88, dx * 0.72));
+        var op = Math.max(0.45, 1 - Math.abs(dx) / 210);
+        leftEl.style.transform = 'translate3d(' + damped.toFixed(1) + 'px, 0, 0)';
+        leftEl.style.opacity = op.toFixed(3);
+      }, { passive: false });
+
+      function _finishMiniSwipe(cancelled) {
+        if (!mActive) return;
+        var wasLocked = mLocked;
+        var dx = mLastDx;
+        var dt = Math.max(1, Date.now() - mStartTime);
+        var vx = dx / dt;
+        mActive = false;
+        mLocked = false;
+        mLastDx = 0;
+
+        if (!wasLocked) return;
+        miniSwipeSuppressClickUntil = Date.now() + 340;
+
+        var leftEl = mini.querySelector('.mini-player-left');
+        if (!leftEl) return;
+
+        var triggerNext = !cancelled && (dx < -46 || vx < -0.42);
+        var triggerPrev = !cancelled && (dx > 46 || vx > 0.42);
+
+        if (triggerNext || triggerPrev) {
+          var outX = triggerNext ? -46 : 46;
+          var inX = triggerNext ? 34 : -34;
+          leftEl.style.transition = 'transform 130ms cubic-bezier(0.3, 0, 0.8, 0.15), opacity 130ms ease';
+          leftEl.style.transform = 'translate3d(' + outX + 'px, 0, 0)';
+          leftEl.style.opacity = '0';
+
+          mSlideTimer = setTimeout(function () {
+            if (window.App && App.backend) {
+              if (triggerNext && typeof App.backend.next_track === 'function') {
+                App.backend.next_track();
+              } else if (triggerPrev && typeof App.backend.prev_track === 'function') {
+                App.backend.prev_track();
+              }
+            }
+            leftEl.style.transition = 'none';
+            leftEl.style.transform = 'translate3d(' + inX + 'px, 0, 0)';
+            leftEl.style.opacity = '0';
+            void leftEl.offsetWidth;
+            leftEl.style.transition = 'transform 250ms cubic-bezier(0.28, 0.88, 0.24, 1), opacity 220ms ease';
+            leftEl.style.transform = 'translate3d(0, 0, 0)';
+            leftEl.style.opacity = '1';
+            mSlideTimer = setTimeout(function () {
+              leftEl.style.transition = '';
+              leftEl.style.transform = '';
+              leftEl.style.opacity = '';
+              mSlideTimer = null;
+            }, 260);
+          }, 130);
+        } else {
+          leftEl.style.transition = 'transform 220ms cubic-bezier(0.28, 0.88, 0.24, 1), opacity 200ms ease';
+          leftEl.style.transform = 'translate3d(0, 0, 0)';
+          leftEl.style.opacity = '1';
+          mSlideTimer = setTimeout(function () {
+            leftEl.style.transition = '';
+            leftEl.style.transform = '';
+            leftEl.style.opacity = '';
+            mSlideTimer = null;
+          }, 230);
+        }
+      }
+
+      mini.addEventListener('touchend', function () { _finishMiniSwipe(false); }, { passive: true });
+      mini.addEventListener('touchcancel', function () { _finishMiniSwipe(true); }, { passive: true });
     }
 
     // Tap top-left collapse button -> collapse directly back to Mini Player
@@ -1435,6 +1557,7 @@
       document.addEventListener('touchstart', function (e) {
         if (!_isPhone() || e.touches.length !== 1) return;
         if (document.body.classList.contains('np-fullscreen')) return;
+        if (e.target && e.target.closest && e.target.closest('#mini-player')) return;
         var t = e.touches[0];
         var target = _getActiveSubpageDragTarget();
         if (target && t.clientX <= 36) {
