@@ -102,12 +102,12 @@ jobs:
           export ANDROID_HOME="$SDK_ROOT"
           export ANDROID_SDK_ROOT="$SDK_ROOT"
 
-          # Ensure Android 15 (API 35) platform & build-tools are installed
+          # Ensure Android 16 (API 36) platform & build-tools are installed (required by tauri 2.12 :tauri-android)
           SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           if [ -x "$SDKMANAGER" ]; then
             yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-            [ -d "$SDK_ROOT/platforms/android-35" ] || "$SDKMANAGER" "platforms;android-35"
-            [ -d "$SDK_ROOT/build-tools/35.0.0" ] || "$SDKMANAGER" "build-tools;35.0.0"
+            [ -d "$SDK_ROOT/platforms/android-36" ] || "$SDKMANAGER" "platforms;android-36"
+            [ -d "$SDK_ROOT/build-tools/36.0.0" ] || "$SDKMANAGER" "build-tools;36.0.0" || true
           fi
 
           # Locate highest installed NDK (install if absent)
@@ -195,7 +195,7 @@ jobs:
           </network-security-config>
           XMLEOF
 
-          # 2. Patch app/build.gradle.kts (compileSdk/targetSdk 35, minSdk 26, versionCode/versionName)
+          # 2. Patch app/build.gradle.kts (keep compileSdk/targetSdk >= 36, minSdk 26, sync versionCode/versionName)
           python3 - "$SHORT_VER" "$VER_CODE" <<'PYEOF'
           import re, sys, pathlib
 
@@ -203,8 +203,12 @@ jobs:
           gradle = pathlib.Path("src-tauri/gen/android/app/build.gradle.kts")
           text = gradle.read_text(encoding="utf-8")
 
-          text = re.sub(r"compileSdk\s*=\s*\d+", "compileSdk = 35", text)
-          text = re.sub(r"targetSdk\s*=\s*\d+", "targetSdk = 35", text)
+          def bump_sdk(m):
+              key, val = m.group(1), int(m.group(2))
+              return f"{key} = {max(val, 36)}"
+
+          text = re.sub(r"(compileSdk)\s*=\s*(\d+)", bump_sdk, text)
+          text = re.sub(r"(targetSdk)\s*=\s*(\d+)", bump_sdk, text)
           text = re.sub(r"minSdk\s*=\s*\d+", "minSdk = 26", text)
           if re.search(r"versionCode\s*=", text):
               text = re.sub(r"versionCode\s*=\s*[^\n]+", f"versionCode = {ver_code}", text)
@@ -212,7 +216,7 @@ jobs:
               text = re.sub(r"versionName\s*=\s*[^\n]+", f'versionName = "{short_ver}"', text)
 
           gradle.write_text(text, encoding="utf-8")
-          print("Patched app/build.gradle.kts (compileSdk=35, targetSdk=35, minSdk=26, versionCode=" + ver_code + ")")
+          print("Patched app/build.gradle.kts (compileSdk/targetSdk>=36, minSdk=26, versionCode=" + ver_code + ")")
 
           # 3. Patch AndroidManifest.xml (singleTask launchMode, networkSecurityConfig, carminium:// scheme)
           manifest = pathlib.Path("src-tauri/gen/android/app/src/main/AndroidManifest.xml")
