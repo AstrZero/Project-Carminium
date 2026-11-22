@@ -64,6 +64,11 @@ pub fn run() {
                     let artist_name = urlencoding::decode(raw_name)
                         .map(|c| c.into_owned())
                         .unwrap_or_else(|_| raw_name.to_string());
+                    let key = db::md5_hex(&artist_name.trim().to_lowercase());
+                    let cache_jpg = db.artist_image_dir.join(format!("{key}.jpg"));
+                    let miss_file = db.artist_image_dir.join(format!("{key}.miss"));
+
+                    // 1. User-uploaded local override
                     if let Ok(ov) = db.get_artist_override(&artist_name) {
                         if let Some(img_path) = ov["image_path"].as_str() {
                             if !img_path.is_empty() {
@@ -80,6 +85,138 @@ pub fn run() {
                                 }
                             }
                         }
+                    }
+
+                    // 2. Disk cache
+                    if let Ok(bytes) = fs::read(&cache_jpg) {
+                        if !bytes.is_empty() {
+                            if let Ok(resp) = Response::builder()
+                                .status(StatusCode::OK)
+                                .header("Content-Type", "image/jpeg")
+                                .header("Cache-Control", "public, max-age=86400")
+                                .header("Access-Control-Allow-Origin", "*")
+                                .body(bytes)
+                            {
+                                responder.respond(resp);
+                                return;
+                            }
+                        }
+                    }
+
+                    // 3. Online fetch via native URLSession (skip if fresh negative cache < 6h)
+                    let recent_miss = fs::metadata(&miss_file)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok())
+                        .map(|el| el.as_secs() < 6 * 3600)
+                        .unwrap_or(false);
+                    if !recent_miss {
+                        if let Some(bytes) =
+                            lyrics::fetch_artist_image_online(&app, &artist_name).await
+                        {
+                            let _ = fs::write(&cache_jpg, &bytes);
+                            let _ = fs::remove_file(&miss_file);
+                            if let Ok(resp) = Response::builder()
+                                .status(StatusCode::OK)
+                                .header("Content-Type", "image/jpeg")
+                                .header("Cache-Control", "public, max-age=86400")
+                                .header("Access-Control-Allow-Origin", "*")
+                                .body(bytes)
+                            {
+                                responder.respond(resp);
+                                return;
+                            }
+                        } else {
+                            let _ = fs::write(&miss_file, b"");
+                        }
+                    }
+                } else if let Some(raw_name) = path.strip_prefix("/artist-bio/") {
+                    let artist_name = urlencoding::decode(raw_name)
+                        .map(|c| c.into_owned())
+                        .unwrap_or_else(|_| raw_name.to_string());
+                    let key = db::md5_hex(&artist_name.trim().to_lowercase());
+                    let cache_bio = db.artist_image_dir.join(format!("{key}.bio.txt"));
+
+                    let mut bio_text: Option<String> = None;
+                    if let Ok(ov) = db.get_artist_override(&artist_name) {
+                        if let Some(b) = ov["bio"].as_str() {
+                            if !b.trim().is_empty() {
+                                bio_text = Some(b.to_string());
+                            }
+                        }
+                    }
+                    if bio_text.is_none() {
+                        if let Ok(cached) = fs::read_to_string(&cache_bio) {
+                            if !cached.trim().is_empty() {
+                                bio_text = Some(cached);
+                            }
+                        }
+                    }
+                    if bio_text.is_none() {
+                        if let Some(fetched) =
+                            lyrics::fetch_artist_bio_online(&app, &artist_name).await
+                        {
+                            let _ = fs::write(&cache_bio, &fetched);
+                            bio_text = Some(fetched);
+                        }
+                    }
+                    if let Some(text) = bio_text {
+                        if let Ok(resp) = Response::builder()
+                            .status(StatusCode::OK)
+                            .header("Content-Type", "text/plain; charset=utf-8")
+                            .header("Access-Control-Allow-Origin", "*")
+                            .body(text.into_bytes())
+                        {
+                            responder.respond(resp);
+                            return;
+                        }
+                    }
+                } else if let Some(raw_name) = path.strip_prefix("/artist-aliases/") {
+                    let artist_name = urlencoding::decode(raw_name)
+                        .map(|c| c.into_owned())
+                        .unwrap_or_else(|_| raw_name.to_string());
+                    let key = db::md5_hex(&artist_name.trim().to_lowercase());
+                    let cache_alias = db.artist_image_dir.join(format!("{key}.alias.json"));
+
+                    let mut aliases: Vec<String> = Vec::new();
+                    if let Ok(ov) = db.get_artist_override(&artist_name) {
+                        if let Some(arr) = ov["aliases"].as_array() {
+                            for item in arr {
+                                if let Some(s) = item.as_str() {
+                                    if !s.trim().is_empty() {
+                                        aliases.push(s.trim().to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if aliases.is_empty() {
+                        if let Ok(raw) = fs::read_to_string(&cache_alias) {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                                if let Some(arr) = v["aliases"].as_array() {
+                                    aliases = arr
+                                        .iter()
+                                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                        .collect();
+                                }
+                            }
+                        } else {
+                            let fetched =
+                                lyrics::fetch_artist_aliases_online(&app, &artist_name).await;
+                            let payload = serde_json::json!({ "aliases": fetched }).to_string();
+                            let _ = fs::write(&cache_alias, &payload);
+                            aliases = fetched;
+                        }
+                    }
+                    let body = serde_json::json!({ "aliases": aliases }).to_string();
+                    if let Ok(resp) = Response::builder()
+                        .status(StatusCode::OK)
+                        .header("Content-Type", "application/json; charset=utf-8")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(body.into_bytes())
+                    {
+                        responder.respond(resp);
+                        return;
                     }
                 }
 

@@ -70,6 +70,8 @@ pub struct HttpFetchRequest {
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
     pub timeout_secs: Option<f64>,
+    #[serde(default)]
+    pub response_base64: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -62,6 +62,7 @@ private struct HttpFetchArgs: Decodable {
   let headers: [String: String]?
   let body: String?
   let timeoutSecs: Double?
+  let responseBase64: Bool?
 }
 
 private struct HttpFetchResult: Encodable {
@@ -373,9 +374,13 @@ class CarminiumAudioPlugin: Plugin {
       let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
       let text: String
       if let d = data {
-        text = String(data: d, encoding: .utf8)
-          ?? String(data: d, encoding: .isoLatin1)
-          ?? ""
+        if args.responseBase64 == true {
+          text = d.base64EncodedString()
+        } else {
+          text = String(data: d, encoding: .utf8)
+            ?? String(data: d, encoding: .isoLatin1)
+            ?? ""
+        }
       } else {
         text = ""
       }

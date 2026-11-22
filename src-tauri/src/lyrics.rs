@@ -15,7 +15,7 @@ fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-async fn fetch_text<R: Runtime>(
+pub async fn fetch_text_native<R: Runtime>(
     app: &AppHandle<R>,
     method: &str,
     url: &str,
@@ -38,6 +38,7 @@ async fn fetch_text<R: Runtime>(
             headers: header_map.clone(),
             body: body.map(|s| s.to_string()),
             timeout_secs: Some(12.0),
+            response_base64: Some(false),
         })
         .await
     {
@@ -65,6 +66,67 @@ async fn fetch_text<R: Runtime>(
     let status = resp.status().as_u16();
     let text = resp.text().await.map_err(|e| e.to_string())?;
     Ok((status, text))
+}
+
+pub async fn fetch_bytes_native<R: Runtime>(
+    app: &AppHandle<R>,
+    url: &str,
+    headers: &[(&str, &str)],
+) -> Result<Vec<u8>, String> {
+    let mut header_map = HashMap::new();
+    header_map.insert("User-Agent".to_string(), DESKTOP_UA.to_string());
+    for (k, v) in headers {
+        header_map.insert((*k).to_string(), (*v).to_string());
+    }
+
+    if let Ok(resp) = app
+        .carminium_audio()
+        .http_fetch(HttpFetchRequest {
+            url: url.to_string(),
+            method: "GET".to_string(),
+            headers: header_map,
+            body: None,
+            timeout_secs: Some(12.0),
+            response_base64: Some(true),
+        })
+        .await
+    {
+        if resp.error.as_deref() != Some("desktop_unavailable") {
+            if let Some(err) = resp.error {
+                return Err(err);
+            }
+            if !(200..300).contains(&resp.status) {
+                return Err(format!("HTTP {}", resp.status));
+            }
+            return base64::engine::general_purpose::STANDARD
+                .decode(resp.body.trim())
+                .map_err(|e| format!("base64 decode error: {e}"));
+        }
+    }
+
+    let client = http_client()?;
+    let mut req = client.get(url);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    resp.bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| e.to_string())
+}
+
+async fn fetch_text<R: Runtime>(
+    app: &AppHandle<R>,
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: Option<&str>,
+) -> Result<(u16, String), String> {
+    fetch_text_native(app, method, url, headers, body).await
 }
 
 fn strip_jsonp(raw: &str) -> &str {
@@ -116,53 +178,74 @@ pub async fn fetch_lyrics_by_id<R: Runtime>(
 
 async fn search_ncm<R: Runtime>(app: &AppHandle<R>, query: &str) -> Value {
     let form_body = format!("s={}&type=1&limit=20&offset=0", urlencoding::encode(query));
-    let raw = match fetch_text(
-        app,
-        "POST",
+    let ncm_headers = [
+        ("Referer", "https://music.163.com/"),
+        ("Origin", "https://music.163.com"),
+        ("Cookie", "os=pc; appver=2.9.7"),
+        ("Content-Type", "application/x-www-form-urlencoded"),
+    ];
+    let endpoints = [
         "https://music.163.com/api/search/get",
-        &[
-            ("Referer", "https://music.163.com"),
-            ("Content-Type", "application/x-www-form-urlencoded"),
-        ],
-        Some(&form_body),
-    )
-    .await
-    {
-        Ok((_, text)) => text,
-        Err(e) => return json!({ "songs": [], "error": e }),
-    };
-    let data: Value = match serde_json::from_str(&raw) {
-        Ok(v) => v,
-        Err(e) => return json!({ "songs": [], "error": format!("parse error: {e}") }),
-    };
-    let songs: Vec<Value> = data
-        .pointer("/result/songs")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|s| {
-                    let artists = s
-                        .get("artists")
-                        .and_then(|a| a.as_array())
-                        .map(|list| {
-                            list.iter()
-                                .filter_map(|x| x.get("name").and_then(|n| n.as_str()))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        })
-                        .unwrap_or_default();
-                    json!({
-                        "id": s.get("id").cloned().unwrap_or(Value::Null),
-                        "name": s.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                        "artist": artists,
-                        "album": s.pointer("/album/name").and_then(|v| v.as_str()).unwrap_or(""),
-                        "duration": s.get("duration").and_then(|v| v.as_i64()).unwrap_or(0),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    json!({ "songs": songs, "error": null })
+        "https://music.163.com/api/cloudsearch/pc",
+    ];
+
+    let mut last_err: Option<String> = None;
+    for ep in endpoints {
+        match fetch_text(app, "POST", ep, &ncm_headers, Some(&form_body)).await {
+            Ok((_, raw)) => {
+                if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+                    let songs_arr = data
+                        .pointer("/result/songs")
+                        .and_then(|v| v.as_array());
+                    if let Some(arr) = songs_arr {
+                        if !arr.is_empty() {
+                            let songs: Vec<Value> = arr
+                                .iter()
+                                .map(|s| {
+                                    let artist_list = s
+                                        .get("artists")
+                                        .or_else(|| s.get("ar"))
+                                        .and_then(|a| a.as_array());
+                                    let artists = artist_list
+                                        .map(|list| {
+                                            list.iter()
+                                                .filter_map(|x| x.get("name").and_then(|n| n.as_str()))
+                                                .collect::<Vec<_>>()
+                                                .join(", ")
+                                        })
+                                        .unwrap_or_default();
+                                    let album = s
+                                        .pointer("/album/name")
+                                        .or_else(|| s.pointer("/al/name"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let duration = s
+                                        .get("duration")
+                                        .or_else(|| s.get("dt"))
+                                        .and_then(|v| v.as_i64())
+                                        .unwrap_or(0);
+                                    json!({
+                                        "id": s.get("id").cloned().unwrap_or(Value::Null),
+                                        "name": s.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                                        "artist": artists,
+                                        "album": album,
+                                        "duration": duration,
+                                    })
+                                })
+                                .collect();
+                            return json!({ "songs": songs, "error": null });
+                        }
+                    }
+                } else {
+                    last_err = Some("invalid json from ncm".to_string());
+                }
+            }
+            Err(e) => {
+                last_err = Some(e);
+            }
+        }
+    }
+    json!({ "songs": [], "error": last_err })
 }
 
 fn yrc_to_enhanced_lrc(yrc: &str) -> String {
@@ -221,7 +304,10 @@ async fn fetch_ncm<R: Runtime>(app: &AppHandle<R>, song_id: &str) -> Value {
         app,
         "GET",
         &url,
-        &[("Referer", "https://music.163.com")],
+        &[
+            ("Referer", "https://music.163.com/"),
+            ("Cookie", "os=pc; appver=2.9.7"),
+        ],
         None,
     )
     .await
@@ -544,6 +630,170 @@ fn combine_lrc(orig: &str, romaji: &str, trans: &str) -> String {
                     out.push('\n');
                 }
             }
+        }
+    }
+    out
+}
+
+// ── Online Artist Image / Bio / Aliases (Native URLSession + Fallback) ──
+
+async fn search_ncm_artist<R: Runtime>(app: &AppHandle<R>, artist_name: &str) -> Option<Value> {
+    let name = artist_name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let body = format!(
+        "s={}&type=100&offset=0&total=true&limit=6",
+        urlencoding::encode(name)
+    );
+    let headers = [
+        ("Referer", "https://music.163.com/"),
+        ("Origin", "https://music.163.com"),
+        ("Cookie", "os=pc; appver=2.9.7"),
+        ("Content-Type", "application/x-www-form-urlencoded"),
+    ];
+    let (_, raw) = fetch_text(
+        app,
+        "POST",
+        "https://music.163.com/api/search/get/web",
+        &headers,
+        Some(&body),
+    )
+    .await
+    .ok()?;
+    let data: Value = serde_json::from_str(&raw).ok()?;
+    let list = data.pointer("/result/artists")?.as_array()?;
+    let target = name.to_lowercase();
+    let best = list
+        .iter()
+        .find(|a| {
+            a.get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_lowercase() == target)
+                .unwrap_or(false)
+        })
+        .or_else(|| list.first())?;
+    Some(best.clone())
+}
+
+pub async fn fetch_artist_image_online<R: Runtime>(
+    app: &AppHandle<R>,
+    artist_name: &str,
+) -> Option<Vec<u8>> {
+    let name = artist_name.trim();
+    if name.is_empty() || name == "未知艺术家" || name.eq_ignore_ascii_case("unknown artist") {
+        return None;
+    }
+
+    // 1. NetEase Cloud Music artist avatar
+    if let Some(artist) = search_ncm_artist(app, name).await {
+        let raw_url = artist
+            .get("img1v1Url")
+            .or_else(|| artist.get("picUrl"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if !raw_url.is_empty() && !raw_url.contains("5639395138885805") {
+            let sized = if raw_url.contains('?') {
+                format!("{raw_url}&param=500y500")
+            } else {
+                format!("{raw_url}?param=500y500")
+            };
+            if let Ok(bytes) =
+                fetch_bytes_native(app, &sized, &[("Referer", "https://music.163.com/")]).await
+            {
+                if bytes.len() > 256 {
+                    return Some(bytes);
+                }
+            }
+        }
+    }
+
+    // 2. Deezer artist avatar fallback
+    let dz_url = format!(
+        "https://api.deezer.com/search/artist/?q={}&limit=5",
+        urlencoding::encode(name)
+    );
+    if let Ok((_, raw)) = fetch_text(app, "GET", &dz_url, &[], None).await {
+        if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+            if let Some(list) = data.get("data").and_then(|v| v.as_array()) {
+                let target = name.to_lowercase();
+                let hit = list
+                    .iter()
+                    .find(|a| {
+                        a.get("name")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.trim().to_lowercase() == target)
+                            .unwrap_or(false)
+                    })
+                    .or_else(|| list.first());
+                if let Some(img_url) = hit.and_then(|a| {
+                    a.get("picture_big")
+                        .or_else(|| a.get("picture_xl"))
+                        .and_then(|v| v.as_str())
+                }) {
+                    if let Ok(bytes) = fetch_bytes_native(app, img_url, &[]).await {
+                        if bytes.len() > 256 {
+                            return Some(bytes);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+pub async fn fetch_artist_bio_online<R: Runtime>(
+    app: &AppHandle<R>,
+    artist_name: &str,
+) -> Option<String> {
+    let artist = search_ncm_artist(app, artist_name).await?;
+    let id = artist.get("id").and_then(|v| v.as_i64())?;
+    let url = format!("https://music.163.com/api/artist/desc?id={id}");
+    let (_, raw) = fetch_text(
+        app,
+        "GET",
+        &url,
+        &[
+            ("Referer", "https://music.163.com/"),
+            ("Cookie", "os=pc; appver=2.9.7"),
+        ],
+        None,
+    )
+    .await
+    .ok()?;
+    let data: Value = serde_json::from_str(&raw).ok()?;
+    let desc = data
+        .get("briefDesc")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())?;
+    Some(desc)
+}
+
+pub async fn fetch_artist_aliases_online<R: Runtime>(
+    app: &AppHandle<R>,
+    artist_name: &str,
+) -> Vec<String> {
+    let Some(artist) = search_ncm_artist(app, artist_name).await else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    if let Some(arr) = artist.get("alias").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                let t = s.trim();
+                if !t.is_empty() && !out.iter().any(|x| x == t) {
+                    out.push(t.to_string());
+                }
+            }
+        }
+    }
+    if let Some(tr) = artist.get("trans").and_then(|v| v.as_str()) {
+        let t = tr.trim();
+        if !t.is_empty() && !out.iter().any(|x| x == t) {
+            out.push(t.to_string());
         }
     }
     out

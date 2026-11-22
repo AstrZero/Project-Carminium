@@ -448,7 +448,12 @@ impl PlayerState {
                     .unwrap_or(false)
         };
         if is_current {
-            emit_bridge(app, "lyrics_changed", json!(lyrics));
+            let payload = json!({
+                "trackId": track_id,
+                "lyrics": lyrics,
+            })
+            .to_string();
+            emit_bridge(app, "lyrics_changed", json!(payload));
         }
     }
 
