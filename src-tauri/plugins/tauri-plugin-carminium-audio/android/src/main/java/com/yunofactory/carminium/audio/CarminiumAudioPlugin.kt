@@ -496,7 +496,7 @@ class CarminiumAudioPlugin(private val activity: Activity) : Plugin(activity) {
         if (result.resultCode != Activity.RESULT_OK || treeUri == null) {
             val canceled = JSObject().apply {
                 put("copiedPaths", JSArray())
-                put("importedDir", JSObject.NULL)
+                put("importedDir", org.json.JSONObject.NULL)
                 put("canceled", true)
             }
             invoke.resolve(canceled)
@@ -560,7 +560,7 @@ class CarminiumAudioPlugin(private val activity: Activity) : Plugin(activity) {
             activity.runOnUiThread {
                 val ret = JSObject().apply {
                     put("copiedPaths", copied)
-                    put("importedDir", targetDirPath ?: JSObject.NULL)
+                    put("importedDir", targetDirPath ?: org.json.JSONObject.NULL)
                     put("canceled", false)
                 }
                 invoke.resolve(ret)
@@ -642,7 +642,7 @@ class CarminiumAudioPlugin(private val activity: Activity) : Plugin(activity) {
                 }
                 result.put("status", code)
                 result.put("body", bodyStr)
-                result.put("error", JSObject.NULL)
+                result.put("error", org.json.JSONObject.NULL)
             } catch (e: Exception) {
                 result.put("status", 0)
                 result.put("body", "")
