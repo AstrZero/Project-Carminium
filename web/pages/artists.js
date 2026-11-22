@@ -476,6 +476,7 @@
 
     const countEl = document.getElementById('artist-count');
     if (countEl) {
+      countEl.removeAttribute('data-i18n');
       countEl.textContent = filterStr ? App.i18n.t('artists.filteredCount', { shown: list.length, total: allArtists.length }) : App.i18n.t('artists.count', { count: allArtists.length });
     }
 

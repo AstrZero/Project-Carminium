@@ -89,6 +89,7 @@
 
     const countEl = document.getElementById('history-count');
     if (countEl) {
+      countEl.removeAttribute('data-i18n');
       countEl.textContent = list.length === 0
         ? (filterStr ? App.i18n.t('common.noResults') : App.i18n.t('history.empty'))
         : App.i18n.t('music.trackCount', { count: list.length });

@@ -1258,23 +1258,59 @@ let _lyricLineEls = null;
     }
 
     if (els.miniProgressBar) {
-      els.miniProgressBar.addEventListener('click', function (e) {
-        if (!duration) return;
+      var miniSeekPointerId = null;
+      function _miniPctFromEvent(e) {
         var rect = els.miniProgressBar.getBoundingClientRect();
-        var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        if (!rect.width) return 0;
+        return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      }
+      function _applyMiniSeekVisual(pct) {
         if (els.miniProgressTrackFill) els.miniProgressTrackFill.style.width = (pct * 100) + '%';
         if (els.miniProgressThumb) els.miniProgressThumb.style.left = (pct * 100) + '%';
-        if (els.miniProgressBar) els.miniProgressBar.style.setProperty('--progress-val', (pct * 100) + '%');
-        App.backend.seek(Math.floor(pct * duration));
+        els.miniProgressBar.style.setProperty('--progress-val', (pct * 100) + '%');
+      }
+      function _onMiniPointerMove(e) {
+        if (miniSeekPointerId === null || e.pointerId !== miniSeekPointerId) return;
+        _applyMiniSeekVisual(_miniPctFromEvent(e));
+      }
+      function _onMiniPointerUp(e) {
+        if (miniSeekPointerId === null || e.pointerId !== miniSeekPointerId) return;
+        miniSeekPointerId = null;
+        isSeeking = false;
+        try { els.miniProgressBar.releasePointerCapture(e.pointerId); } catch (_) {}
+        document.removeEventListener('pointermove', _onMiniPointerMove);
+        document.removeEventListener('pointerup', _onMiniPointerUp);
+        document.removeEventListener('pointercancel', _onMiniPointerUp);
+        var pct = _miniPctFromEvent(e);
+        _applyMiniSeekVisual(pct);
+        if (duration) App.backend.seek(Math.floor(pct * duration));
+      }
+      els.miniProgressBar.addEventListener('pointerdown', function (e) {
+        if (!duration) return;
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        e.preventDefault();
+        miniSeekPointerId = e.pointerId;
+        isSeeking = true;
+        try { els.miniProgressBar.setPointerCapture(e.pointerId); } catch (_) {}
+        _applyMiniSeekVisual(_miniPctFromEvent(e));
+        document.addEventListener('pointermove', _onMiniPointerMove);
+        document.addEventListener('pointerup', _onMiniPointerUp);
+        document.addEventListener('pointercancel', _onMiniPointerUp);
       });
     }
 
-    els.barWrap.addEventListener('mousedown', function (e) {
+    var activeSeekPointerId = null;
+    els.barWrap.addEventListener('pointerdown', function (e) {
       if (!duration) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      activeSeekPointerId = e.pointerId;
       isSeeking = true;
+      try { els.barWrap.setPointerCapture(e.pointerId); } catch (_) {}
       _updateSeek(e);
-      document.addEventListener('mousemove', _onSeekMove);
-      document.addEventListener('mouseup', _onSeekUp);
+      document.addEventListener('pointermove', _onSeekMove);
+      document.addEventListener('pointerup', _onSeekUp);
+      document.addEventListener('pointercancel', _onSeekUp);
     });
 
     els.sliderVol.addEventListener('input', function (e) {
@@ -1442,6 +1478,7 @@ let _lyricLineEls = null;
 
     function _updateSeek(e) {
       const rect = els.barWrap.getBoundingClientRect();
+      if (!rect.width) return;
       let pct = (e.clientX - rect.left) / rect.width;
       pct = Math.max(0, Math.min(1, pct));
       els.barFill.style.width = (pct * 100) + '%';
@@ -1450,12 +1487,20 @@ let _lyricLineEls = null;
       els.timeCur.textContent = App.utils.formatDuration(pct * duration);
       els.timeDur.textContent = '-' + App.utils.formatDuration(duration - pct * duration);
     }
-    function _onSeekMove(e) { _updateSeek(e); }
+    function _onSeekMove(e) {
+      if (activeSeekPointerId !== null && e.pointerId !== activeSeekPointerId) return;
+      _updateSeek(e);
+    }
     function _onSeekUp(e) {
-      document.removeEventListener('mousemove', _onSeekMove);
-      document.removeEventListener('mouseup', _onSeekUp);
+      if (activeSeekPointerId !== null && e.pointerId !== activeSeekPointerId) return;
+      activeSeekPointerId = null;
+      try { els.barWrap.releasePointerCapture(e.pointerId); } catch (_) {}
+      document.removeEventListener('pointermove', _onSeekMove);
+      document.removeEventListener('pointerup', _onSeekUp);
+      document.removeEventListener('pointercancel', _onSeekUp);
       isSeeking = false;
       const rect = els.barWrap.getBoundingClientRect();
+      if (!rect.width) return;
       let pct = (e.clientX - rect.left) / rect.width;
       pct = Math.max(0, Math.min(1, pct));
       App.backend.seek(Math.floor(pct * duration));
@@ -3331,7 +3376,15 @@ let _lyricLineEls = null;
     }
   }
 
+  var _lastPlayVisualState = null;
+
   np.updateState = function (state) {
+    var visualKey = state === 'loading' ? 'loading' : (state === 'playing' ? 'playing' : 'paused');
+    if (visualKey === _lastPlayVisualState) {
+      if (_videoBg) _videoBg.setPlaying(state === 'playing');
+      return;
+    }
+    _lastPlayVisualState = visualKey;
     if (state === 'loading') {
       np.setTrackLoading(true);
       App.utils.squeezeIcon(els.iconPlay, 'hourglass_top');

@@ -207,8 +207,16 @@
     state = null;
   }
 
+  function _isIosPhone() {
+    return window.__CARMINIUM_PLATFORM__ === 'ios' && window.innerWidth <= 767;
+  }
+
   function _evaluate() {
     frame = 0;
+    if (_isIosPhone()) {
+      _teardown();
+      return;
+    }
     if (!state || !state.bar.isConnected) return; /* 页面已重绘，等 _scan 重新认 */
     var pr = state.pane.getBoundingClientRect();
     if (pr.width < 80 || pr.height < 80) return; /* 全窗口视图/切页把内容区藏了 */
@@ -235,6 +243,7 @@
 
   function _scan() {
     scanFrame = 0;
+    if (_isIosPhone()) return _teardown();
     var pane = document.getElementById('content-pane');
     var page = document.getElementById('page-container');
     if (!pane || !page) return _teardown();

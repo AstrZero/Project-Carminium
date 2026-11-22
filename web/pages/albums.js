@@ -379,6 +379,7 @@
 
     const countEl = document.getElementById('album-count');
     if (countEl) {
+      countEl.removeAttribute('data-i18n');
       countEl.textContent = filterStr ? App.i18n.t('albums.filteredCount', { shown: list.length, total: allAlbums.length }) : App.i18n.t('albums.count', { count: allAlbums.length });
     }
 

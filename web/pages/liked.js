@@ -179,6 +179,7 @@
   function _renderCount() {
     const el = document.getElementById('liked-count');
     if (!el) return;
+    el.removeAttribute('data-i18n');
     const filtered = !!filterStr;
     let total = 0;
     let key = 'music.trackCount';

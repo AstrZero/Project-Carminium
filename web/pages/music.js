@@ -632,6 +632,7 @@
   function _updateCount() {
     const countEl = document.getElementById('music-count');
     if (!countEl) return;
+    countEl.removeAttribute('data-i18n');
     if (_hasExclusions()) {
       const filtered = allTracks.filter(t => !_isExcluded(t));
       countEl.textContent = App.i18n.t('music.trackCount', { count: filtered.length }) +
