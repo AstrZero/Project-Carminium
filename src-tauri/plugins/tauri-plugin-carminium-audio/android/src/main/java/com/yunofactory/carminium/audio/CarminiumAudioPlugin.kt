@@ -18,6 +18,7 @@ import android.util.Base64
 import android.view.View
 import android.webkit.WebSettings
 import android.webkit.WebView
+import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.ActivityResult
@@ -257,6 +258,28 @@ class CarminiumAudioPlugin(private val activity: Activity) : Plugin(activity) {
         comp.onBackPressedDispatcher.addCallback(
             comp,
             object : OnBackPressedCallback(true) {
+                override fun handleOnBackStarted(backEvent: BackEventCompat) {
+                    webView.evaluateJavascript(
+                        "window.__carminiumAndroidBackProgress&&window.__carminiumAndroidBackProgress(0,${backEvent.swipeEdge});",
+                        null
+                    )
+                }
+
+                override fun handleOnBackProgressed(backEvent: BackEventCompat) {
+                    val p = String.format(Locale.US, "%.4f", backEvent.progress.coerceIn(0f, 1f))
+                    webView.evaluateJavascript(
+                        "window.__carminiumAndroidBackProgress&&window.__carminiumAndroidBackProgress($p,${backEvent.swipeEdge});",
+                        null
+                    )
+                }
+
+                override fun handleOnBackCancelled() {
+                    webView.evaluateJavascript(
+                        "window.__carminiumAndroidBackCancel&&window.__carminiumAndroidBackCancel();",
+                        null
+                    )
+                }
+
                 override fun handleOnBackPressed() {
                     webView.evaluateJavascript(
                         "(function(){return typeof window.__carminiumHandleAndroidBack==='function'?window.__carminiumHandleAndroidBack():'minimize';})()"

@@ -590,6 +590,35 @@
   // ── 2b. 2nd-Level Subpage Back Bar & 2-Level Settings (iPhone) ───────
 
   var _subpageTitleText = '';
+  var _wasSubpage = false;
+  var _suppressNextPopAnim = false;
+
+  function _clearInlineMotion(el) {
+    if (!el) return;
+    el.style.transition = '';
+    el.style.transform = '';
+    el.style.borderRadius = '';
+    el.style.opacity = '';
+    el.classList.remove('mobile-swipe-dragging');
+  }
+
+  function _playPageTransition(el, kind) {
+    if (!el || !_isPhone()) return;
+    _clearInlineMotion(el);
+    el.classList.remove('mobile-anim-push-in', 'mobile-anim-pop-in');
+    void el.offsetWidth;
+    var cls = (kind === 'pop') ? 'mobile-anim-pop-in' : 'mobile-anim-push-in';
+    el.classList.add(cls);
+    var done = false;
+    function cleanup() {
+      if (done) return;
+      done = true;
+      el.classList.remove(cls);
+      el.removeEventListener('animationend', cleanup);
+    }
+    el.addEventListener('animationend', cleanup);
+    setTimeout(cleanup, 380);
+  }
 
   function _ensureSubpageTitleEl() {
     var left = document.querySelector('.title-bar-left');
@@ -629,9 +658,20 @@
     return false;
   }
 
-  function _syncSubpageState() {
+  function _syncSubpageState(opts) {
+    opts = opts || {};
+    var prevSub = _wasSubpage;
     var isSub = _detectSubpage();
+    _wasSubpage = isSub;
+
+    var curPage = (window.App && App.state && App.state.currentPage) || '';
+    var isSettingsDetail = document.body.classList.contains('ios-settings-detail');
+    var isTransparentBar = isSub && !isSettingsDetail && curPage !== 'search' && curPage !== 'about';
+    var isHero = isTransparentBar && !!document.querySelector('#page-container .detail-header.hero');
+
     document.body.classList.toggle('ios-subpage', isSub);
+    document.body.classList.toggle('ios-subpage-transparent-bar', isTransparentBar);
+    document.body.classList.toggle('ios-subpage-hero', isHero);
 
     var backBtn = document.getElementById('title-bar-back');
     if (backBtn && isSub) {
@@ -640,15 +680,16 @@
       backBtn.style.pointerEvents = 'auto';
     }
 
-    if (!document.body.classList.contains('ios-settings-detail')) {
+    if (!isSettingsDetail) {
       var titleEl = _ensureSubpageTitleEl();
       if (titleEl) {
-        if (!isSub) {
+        if (!isSub || isTransparentBar) {
           titleEl.textContent = '';
         } else {
-          var curPage = (window.App && App.state && App.state.currentPage) || '';
           if (curPage === 'search') {
             titleEl.textContent = _t('common.search', '搜索');
+          } else if (curPage === 'about') {
+            titleEl.textContent = _t('settings.section.about', '关于');
           } else {
             var h = document.querySelector('#page-container .detail-name, #page-container .ym-mix-detail-title, #page-container .playlist-title');
             titleEl.textContent = h ? (h.textContent || '').trim() : '';
@@ -656,6 +697,18 @@
         }
       }
     }
+
+    if (!opts.skipAnim && !isSettingsDetail && !document.body.classList.contains('np-fullscreen')) {
+      var container = document.getElementById('page-container');
+      if (isSub && !prevSub) {
+        _playPageTransition(container, 'push');
+      } else if (!isSub && prevSub) {
+        if (!_suppressNextPopAnim) {
+          _playPageTransition(container, 'pop');
+        }
+      }
+    }
+    _suppressNextPopAnim = false;
   }
 
   function _enhanceSettingsTwoLevel() {
@@ -663,7 +716,7 @@
     if (!nav || nav.dataset.iosTwoLevelBound === '1') return;
     nav.dataset.iosTwoLevelBound = '1';
 
-    // Always start at Level 1 (Category List) when entering Settings on iPhone
+    // Always start at Level 1 (Category List) when entering Settings on mobile
     document.body.classList.remove('ios-settings-detail');
     _setSubpageTitle('');
 
@@ -681,20 +734,26 @@
         document.body.classList.add('ios-settings-detail');
         var pane = document.getElementById('content-pane');
         if (pane) pane.scrollTop = 0;
-        _syncSubpageState();
+        _syncSubpageState({ skipAnim: true });
+        _playPageTransition(document.querySelector('.settings-content'), 'push');
       });
     });
 
-    _syncSubpageState();
+    _syncSubpageState({ skipAnim: true });
   }
 
-  function _exitSettingsDetail() {
+  function _exitSettingsDetail(skipAnim) {
     if (!document.body.classList.contains('ios-settings-detail')) return false;
+    var sc = document.querySelector('.settings-content');
+    _clearInlineMotion(sc);
     document.body.classList.remove('ios-settings-detail');
     _setSubpageTitle('');
     var pane = document.getElementById('content-pane');
     if (pane) pane.scrollTop = 0;
-    _syncSubpageState();
+    _syncSubpageState({ skipAnim: true });
+    if (!skipAnim) {
+      _playPageTransition(document.querySelector('.settings-nav'), 'pop');
+    }
     return true;
   }
 
@@ -784,34 +843,78 @@
     }
   }
 
+  var _npSheetCloseTimer = null;
+
   function _openPhoneNowPlaying() {
     var pane = document.getElementById('now-playing-pane');
     if (!pane) return;
-    pane.classList.remove('collapsed', 'ios-queue-open');
+    if (_npSheetCloseTimer) {
+      clearTimeout(_npSheetCloseTimer);
+      _npSheetCloseTimer = null;
+    }
+    _clearInlineMotion(pane);
+    pane.classList.remove('collapsed', 'ios-queue-open', 'mobile-sheet-closing');
     var qPanel = pane.querySelector('.np-panel--queue');
     if (qPanel) qPanel.classList.remove('active');
-    pane.classList.add('fullscreen');
+    pane.classList.add('fullscreen', 'mobile-sheet-opening');
     document.body.classList.remove('player-collapsed');
     document.body.classList.add('np-fullscreen');
-    _syncSubpageState();
+    _syncSubpageState({ skipAnim: true });
 
-    // Enforce 2-mode (solo or lyrics) on iPhone: if currently in duo, switch to solo
+    var clearOpen = function () {
+      pane.classList.remove('mobile-sheet-opening');
+      pane.removeEventListener('animationend', clearOpen);
+    };
+    pane.addEventListener('animationend', clearOpen);
+    setTimeout(clearOpen, 380);
+
+    // Enforce 2-mode (solo or lyrics) on mobile: if currently in duo, switch to solo
     if (pane.classList.contains('np-content-duo') ||
         (!pane.classList.contains('np-content-solo') && !pane.classList.contains('np-content-lyrics'))) {
       _setPhoneNpMode('solo');
     }
   }
 
-  function _closePhoneNowPlaying() {
+  function _finishClosePhoneNowPlaying() {
     var pane = document.getElementById('now-playing-pane');
     if (!pane) return;
-    pane.classList.remove('fullscreen', 'ios-queue-open');
+    _clearInlineMotion(pane);
+    pane.classList.remove('fullscreen', 'ios-queue-open', 'mobile-sheet-opening', 'mobile-sheet-closing');
     var qPanel = pane.querySelector('.np-panel--queue');
     if (qPanel) qPanel.classList.remove('active');
     pane.classList.add('collapsed');
     document.body.classList.remove('np-fullscreen');
     document.body.classList.add('player-collapsed');
-    _syncSubpageState();
+    _syncSubpageState({ skipAnim: true });
+  }
+
+  function _closePhoneNowPlaying(immediate) {
+    var pane = document.getElementById('now-playing-pane');
+    if (!pane) return;
+    if (_npSheetCloseTimer) {
+      clearTimeout(_npSheetCloseTimer);
+      _npSheetCloseTimer = null;
+    }
+    if (immediate || !pane.classList.contains('fullscreen')) {
+      _finishClosePhoneNowPlaying();
+      return;
+    }
+    _clearInlineMotion(pane);
+    pane.classList.remove('mobile-sheet-opening');
+    pane.classList.add('mobile-sheet-closing');
+    var done = false;
+    function onEnd() {
+      if (done) return;
+      done = true;
+      pane.removeEventListener('animationend', onEnd);
+      if (_npSheetCloseTimer) {
+        clearTimeout(_npSheetCloseTimer);
+        _npSheetCloseTimer = null;
+      }
+      _finishClosePhoneNowPlaying();
+    }
+    pane.addEventListener('animationend', onEnd);
+    _npSheetCloseTimer = setTimeout(onEnd, 280);
   }
 
   function _setupPhonePlaybackBehavior() {
@@ -878,6 +981,7 @@
     var navSettings = document.getElementById('nav-settings');
     if (navSettings) {
       navSettings.addEventListener('click', function () {
+        _suppressNextPopAnim = true;
         document.body.classList.remove('ios-settings-detail');
         _navigateToNavItem('settings');
       });
@@ -889,6 +993,7 @@
       navDrawer.addEventListener('click', function (e) {
         var btn = e.target.closest('.nav-item');
         if (!btn || btn.id === 'nav-more') return;
+        _suppressNextPopAnim = true;
         _closeMorePopup();
         document.body.classList.remove('ios-settings-detail');
         var moreEl = document.getElementById('nav-more');
@@ -972,45 +1077,253 @@
       }, { passive: true });
     });
 
-    // Left-edge swipe right -> Back button on iOS (Android uses native OS back gesture via __carminiumHandleAndroidBack)
+    function _getActiveSubpageDragTarget() {
+      if (document.body.classList.contains('ios-settings-detail')) {
+        return document.querySelector('.settings-content');
+      }
+      if (document.body.classList.contains('ios-subpage')) {
+        return document.getElementById('page-container');
+      }
+      return null;
+    }
+
+    function _triggerActiveSubpageBack(skipPopAnim) {
+      if (document.body.classList.contains('ios-settings-detail')) {
+        _exitSettingsDetail(skipPopAnim);
+        return;
+      }
+      if (skipPopAnim) _suppressNextPopAnim = true;
+      var backBtn = document.getElementById('title-bar-back');
+      if (backBtn) backBtn.click();
+    }
+
+    // Interactive 1:1 left-edge swipe-back on iOS (all subpages including Settings Level 2)
+    // Android uses native OS predictive back gesture via __carminiumAndroidBackProgress / __carminiumHandleAndroidBack
     if (window.__CARMINIUM_MOBILE_OS__ !== 'android') {
       var edgeActive = false;
+      var edgeLocked = false;
       var edgeStartX = 0;
       var edgeStartY = 0;
+      var edgeStartTime = 0;
+      var edgeLastDx = 0;
+      var edgeTarget = null;
 
       document.addEventListener('touchstart', function (e) {
         if (!_isPhone() || e.touches.length !== 1) return;
+        if (document.body.classList.contains('np-fullscreen')) return;
         var t = e.touches[0];
-        if (t.clientX <= 24) {
+        var target = _getActiveSubpageDragTarget();
+        if (target && t.clientX <= 36) {
           edgeActive = true;
+          edgeLocked = false;
           edgeStartX = t.clientX;
           edgeStartY = t.clientY;
+          edgeStartTime = Date.now();
+          edgeLastDx = 0;
+          edgeTarget = target;
         } else {
           edgeActive = false;
+          edgeTarget = null;
         }
       }, { passive: true });
 
-      document.addEventListener('touchend', function (e) {
-        if (!edgeActive) return;
-        edgeActive = false;
-        var t = e.changedTouches && e.changedTouches[0];
-        if (!t) return;
+      document.addEventListener('touchmove', function (e) {
+        if (!edgeActive || !edgeTarget || e.touches.length !== 1) return;
+        var t = e.touches[0];
         var dx = t.clientX - edgeStartX;
         var dy = Math.abs(t.clientY - edgeStartY);
-        if (dx > 70 && dy < 60) {
-          if (document.body.classList.contains('np-fullscreen')) {
-            _closePhoneNowPlaying();
-          } else if (!_exitSettingsDetail() && document.body.classList.contains('ios-subpage')) {
-            var backBtn = document.getElementById('title-bar-back');
-            if (backBtn) backBtn.click();
+
+        if (!edgeLocked) {
+          if (dy > 14 && dy > dx) {
+            edgeActive = false;
+            edgeTarget = null;
+            return;
+          }
+          if (dx > 10 && dx > dy * 1.15) {
+            edgeLocked = true;
+            edgeTarget.style.transition = 'none';
+            edgeTarget.classList.add('mobile-swipe-dragging');
+          } else {
+            return;
           }
         }
-      }, { passive: true });
+
+        if (e.cancelable) e.preventDefault();
+        var clamped = Math.max(0, dx);
+        edgeLastDx = clamped;
+        edgeTarget.style.transform = 'translate3d(' + clamped + 'px, 0, 0)';
+      }, { passive: false });
+
+      function _finishEdgeSwipe(cancelled) {
+        if (!edgeActive || !edgeTarget) return;
+        var target = edgeTarget;
+        var wasLocked = edgeLocked;
+        var dx = edgeLastDx;
+        var dt = Math.max(1, Date.now() - edgeStartTime);
+        var vx = dx / dt;
+        edgeActive = false;
+        edgeLocked = false;
+        edgeTarget = null;
+        edgeLastDx = 0;
+
+        if (!wasLocked) return;
+
+        var shouldCommit = !cancelled && (dx > window.innerWidth * 0.30 || vx > 0.45);
+        if (shouldCommit) {
+          target.style.transition = 'transform 200ms cubic-bezier(0.32, 0.72, 0, 1)';
+          target.style.transform = 'translate3d(100%, 0, 0)';
+          setTimeout(function () {
+            _clearInlineMotion(target);
+            _triggerActiveSubpageBack(false);
+          }, 195);
+        } else {
+          target.style.transition = 'transform 240ms cubic-bezier(0.32, 0.72, 0, 1)';
+          target.style.transform = 'translate3d(0, 0, 0)';
+          setTimeout(function () {
+            _clearInlineMotion(target);
+          }, 245);
+        }
+      }
+
+      document.addEventListener('touchend', function () { _finishEdgeSwipe(false); }, { passive: true });
+      document.addEventListener('touchcancel', function () { _finishEdgeSwipe(true); }, { passive: true });
     }
+
+    // Interactive 1:1 swipe-down to dismiss Fullscreen Now Playing sheet (both iOS & Android)
+    var npDragActive = false;
+    var npDragLocked = false;
+    var npDragStartX = 0;
+    var npDragStartY = 0;
+    var npDragStartTime = 0;
+    var npDragLastDy = 0;
+
+    document.addEventListener('touchstart', function (e) {
+      if (!_isPhone() || e.touches.length !== 1) return;
+      if (!document.body.classList.contains('np-fullscreen')) return;
+      var pane = document.getElementById('now-playing-pane');
+      if (!pane || !pane.contains(e.target)) return;
+      if (e.target.closest('.np-progress-bar, .np-lyrics, .np-queue-list, button, input, [role="slider"]')) return;
+      var t = e.touches[0];
+      npDragActive = true;
+      npDragLocked = false;
+      npDragStartX = t.clientX;
+      npDragStartY = t.clientY;
+      npDragStartTime = Date.now();
+      npDragLastDy = 0;
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function (e) {
+      if (!npDragActive || e.touches.length !== 1) return;
+      var pane = document.getElementById('now-playing-pane');
+      if (!pane) return;
+      var t = e.touches[0];
+      var dy = t.clientY - npDragStartY;
+      var dx = Math.abs(t.clientX - npDragStartX);
+
+      if (!npDragLocked) {
+        if (dx > 14 && dx > dy) {
+          npDragActive = false;
+          return;
+        }
+        if (dy > 12 && dy > dx * 1.2) {
+          npDragLocked = true;
+          pane.style.transition = 'none';
+        } else {
+          return;
+        }
+      }
+
+      if (e.cancelable) e.preventDefault();
+      var clamped = Math.max(0, dy);
+      npDragLastDy = clamped;
+      pane.style.transform = 'translate3d(0, ' + clamped + 'px, 0)';
+      pane.style.borderRadius = Math.min(28, Math.round(clamped * 0.16)) + 'px';
+    }, { passive: false });
+
+    function _finishNpSwipe(cancelled) {
+      if (!npDragActive) return;
+      var wasLocked = npDragLocked;
+      var dy = npDragLastDy;
+      var dt = Math.max(1, Date.now() - npDragStartTime);
+      var vy = dy / dt;
+      npDragActive = false;
+      npDragLocked = false;
+      npDragLastDy = 0;
+      if (!wasLocked) return;
+
+      var pane = document.getElementById('now-playing-pane');
+      if (!pane) return;
+      var shouldDismiss = !cancelled && (dy > 110 || vy > 0.55);
+      if (shouldDismiss) {
+        pane.style.transition = 'transform 200ms cubic-bezier(0.32, 0.72, 0, 1)';
+        pane.style.transform = 'translate3d(0, 100%, 0)';
+        setTimeout(function () {
+          _closePhoneNowPlaying(true);
+        }, 195);
+      } else {
+        pane.style.transition = 'transform 240ms cubic-bezier(0.32, 0.72, 0, 1), border-radius 240ms ease';
+        pane.style.transform = 'translate3d(0, 0, 0)';
+        pane.style.borderRadius = '';
+        setTimeout(function () {
+          _clearInlineMotion(pane);
+        }, 245);
+      }
+    }
+
+    document.addEventListener('touchend', function () { _finishNpSwipe(false); }, { passive: true });
+    document.addEventListener('touchcancel', function () { _finishNpSwipe(true); }, { passive: true });
   }
+
+  // Android real-time Material 3 Predictive Back gesture callbacks (from Kotlin OnBackPressedCallback)
+  function _getAndroidPredictiveTarget() {
+    if (document.body.classList.contains('np-fullscreen')) {
+      return { el: document.getElementById('now-playing-pane'), mode: 'sheet' };
+    }
+    if (document.body.classList.contains('ios-settings-detail')) {
+      return { el: document.querySelector('.settings-content'), mode: 'page' };
+    }
+    if (document.body.classList.contains('ios-subpage')) {
+      return { el: document.getElementById('page-container'), mode: 'page' };
+    }
+    return null;
+  }
+
+  window.__carminiumAndroidBackProgress = function (progress, edge) {
+    var p = Math.max(0, Math.min(1, Number(progress) || 0));
+    var t = _getAndroidPredictiveTarget();
+    if (!t || !t.el) return;
+    t.el.style.transition = 'none';
+    t.el.classList.add('mobile-swipe-dragging');
+    var scale = 1 - 0.08 * p;
+    if (t.mode === 'sheet') {
+      var ty = Math.round(p * 52);
+      t.el.style.transform = 'translate3d(0, ' + ty + 'px, 0) scale(' + scale.toFixed(4) + ')';
+      t.el.style.borderRadius = Math.round(p * 28) + 'px';
+    } else {
+      var dir = (Number(edge) === 1) ? -1 : 1;
+      var tx = Math.round(dir * p * 26);
+      t.el.style.transform = 'translate3d(' + tx + 'px, 0, 0) scale(' + scale.toFixed(4) + ')';
+      t.el.style.borderRadius = Math.round(p * 24) + 'px';
+    }
+  };
+
+  window.__carminiumAndroidBackCancel = function () {
+    var t = _getAndroidPredictiveTarget();
+    if (!t || !t.el) return;
+    var el = t.el;
+    el.style.transition = 'transform 200ms cubic-bezier(0.2, 0, 0, 1), border-radius 200ms ease';
+    el.style.transform = 'translate3d(0, 0, 0) scale(1)';
+    el.style.borderRadius = '';
+    setTimeout(function () {
+      _clearInlineMotion(el);
+    }, 210);
+  };
 
   // Android hardware/gesture Back handler (called by Kotlin OnBackPressedCallback)
   window.__carminiumHandleAndroidBack = function () {
+    var pred = _getAndroidPredictiveTarget();
+    if (pred && pred.el) _clearInlineMotion(pred.el);
+
     // 1. Close open modal dialogs / overlays
     var openDialog = document.querySelector('.dialog-overlay.open, .md-dialog-overlay.open');
     if (openDialog) {
@@ -1036,10 +1349,8 @@
 
     // 3. Close Now Playing queue drawer if open inside fullscreen player
     var npPane = document.getElementById('now-playing-pane');
-    if (npPane && npPane.classList.contains('show-queue')) {
-      var qBtn = document.getElementById('np-queue-btn');
-      if (qBtn) qBtn.click();
-      else npPane.classList.remove('show-queue');
+    if (npPane && npPane.classList.contains('ios-queue-open')) {
+      _setPhoneNpMode('solo');
       return 'handled';
     }
 
@@ -1054,7 +1365,7 @@
       return 'handled';
     }
 
-    // 6. Navigate back on any subpage (Album / Artist / Playlist / Folder / Settings)
+    // 6. Navigate back on any subpage (Album / Artist / Playlist / Folder / Search / About)
     if (document.body.classList.contains('ios-subpage')) {
       var backBtn = document.getElementById('title-bar-back');
       if (backBtn) {
@@ -1090,10 +1401,10 @@
     _setupPhonePlaybackBehavior();
     _setupTouchGestures();
     _applyBottomNavLayout();
-    _syncSubpageState();
+    _syncSubpageState({ skipAnim: true });
     window.addEventListener('resize', function () {
       _applyBottomNavLayout();
-      _syncSubpageState();
+      _syncSubpageState({ skipAnim: true });
     });
 
     if (window.__bridge && window.__bridge.on) {

@@ -283,6 +283,13 @@ jobs:
                   1,
               )
 
+          if "enableOnBackInvokedCallback" not in m:
+              m = m.replace(
+                  "<application",
+                  '<application\n        android:enableOnBackInvokedCallback="true"',
+                  1,
+              )
+
           if 'android:launchMode=' in m:
               m = re.sub(r'android:launchMode="[^"]*"', 'android:launchMode="singleTask"', m, count=1)
           else:

@@ -105,8 +105,9 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     height: 100%;
   }
 
-  /* 2. Top Back Bar: hidden on 1st-level pages & Now Playing; shown ONLY on 2nd-level pages
-        with dedicated top space so it NEVER overlaps page titles! */
+  /* 2. Top Back Bar: hidden on 1st-level pages & Now Playing;
+        - Settings Level-2 / Search: subtle surface top bar with title
+        - Media detail pages (Playlists / Albums / Artists / Mix): transparent floating back button (no background bar!) */
   html[data-platform="ios"] .title-bar {
     display: none !important;
   }
@@ -121,13 +122,34 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     background: color-mix(in srgb, var(--md-surface) 88%, transparent) !important;
     -webkit-backdrop-filter: blur(18px) saturate(1.3);
     backdrop-filter: blur(18px) saturate(1.3);
-    border-bottom: 1px solid color-mix(in srgb, var(--md-outline-variant) 32%, transparent) !important;
+    border-bottom: 1px solid color-mix(in srgb, var(--md-outline-variant) 28%, transparent) !important;
     pointer-events: auto;
     z-index: 900;
     align-items: center;
     justify-content: flex-start;
     gap: 8px;
     box-sizing: border-box;
+  }
+  html[data-platform="ios"] body.ios-subpage.ios-subpage-transparent-bar:not(.np-fullscreen) .title-bar {
+    background: transparent !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    border-bottom: none !important;
+    box-shadow: none !important;
+    pointer-events: none !important;
+  }
+  html[data-platform="ios"] body.ios-subpage.ios-subpage-transparent-bar:not(.np-fullscreen) .title-bar-left {
+    pointer-events: none !important;
+  }
+  html[data-platform="ios"] body.ios-subpage.ios-subpage-transparent-bar:not(.np-fullscreen) .ios-subpage-title {
+    display: none !important;
+  }
+  html[data-platform="ios"] body.ios-subpage.ios-subpage-transparent-bar:not(.np-fullscreen) .title-bar-back {
+    background: color-mix(in srgb, var(--md-surface-container-high) 76%, transparent) !important;
+    -webkit-backdrop-filter: blur(14px) saturate(1.35);
+    backdrop-filter: blur(14px) saturate(1.35);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
+    pointer-events: auto !important;
   }
   html[data-platform="ios"] .title-bar-logo,
   html[data-platform="ios"] .title-bar-title-wrap,
@@ -193,6 +215,15 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   }
   html[data-platform="ios"] body.ios-subpage:not(.np-fullscreen) .content-pane {
     padding-top: calc(var(--ios-safe-top) + var(--ios-subbar-h)) !important;
+  }
+  html[data-platform="ios"] body.ios-subpage.ios-subpage-transparent-bar:not(.np-fullscreen) .content-pane {
+    padding-top: calc(var(--ios-safe-top) + 12px) !important;
+  }
+  html[data-platform="ios"] body.ios-subpage.ios-subpage-hero:not(.np-fullscreen) .content-pane {
+    padding-top: 0 !important;
+  }
+  html[data-platform="ios"] body.ios-subpage.ios-subpage-hero:not(.np-fullscreen) .detail-header.hero {
+    border-radius: 0 !important;
   }
 
   /* 4. Bottom Navigation Bar (moved from left .nav-drawer) */
@@ -1100,5 +1131,108 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   html[data-platform="ios"] .mix-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     gap: 10px !important;
+  }
+
+  /* 11. Native Page Transitions & Interactive Swipe-Back / Predictive Back Animations */
+  @keyframes mobile-ios-push-in {
+    from {
+      transform: translate3d(100%, 0, 0);
+      opacity: 0.96;
+      box-shadow: -10px 0 28px rgba(0, 0, 0, 0.18);
+    }
+    to {
+      transform: translate3d(0, 0, 0);
+      opacity: 1;
+      box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+    }
+  }
+  @keyframes mobile-ios-pop-in {
+    from {
+      transform: translate3d(-26%, 0, 0);
+      opacity: 0.72;
+    }
+    to {
+      transform: translate3d(0, 0, 0);
+      opacity: 1;
+    }
+  }
+  @keyframes mobile-android-push-in {
+    from {
+      transform: translate3d(24%, 0, 0);
+      opacity: 0;
+    }
+    to {
+      transform: translate3d(0, 0, 0);
+      opacity: 1;
+    }
+  }
+  @keyframes mobile-android-pop-in {
+    from {
+      transform: translate3d(-16%, 0, 0);
+      opacity: 0.35;
+    }
+    to {
+      transform: translate3d(0, 0, 0);
+      opacity: 1;
+    }
+  }
+  @keyframes mobile-np-sheet-in {
+    from {
+      transform: translate3d(0, 100%, 0);
+      opacity: 0.92;
+    }
+    to {
+      transform: translate3d(0, 0, 0);
+      opacity: 1;
+    }
+  }
+  @keyframes mobile-np-sheet-out {
+    from {
+      transform: translate3d(0, 0, 0);
+      opacity: 1;
+    }
+    to {
+      transform: translate3d(0, 100%, 0);
+      opacity: 0.85;
+    }
+  }
+
+  html[data-platform="ios"] .mobile-anim-push-in {
+    animation: mobile-ios-push-in 300ms cubic-bezier(0.32, 0.72, 0, 1) both;
+    will-change: transform, opacity;
+  }
+  html[data-platform="ios"] .mobile-anim-pop-in {
+    animation: mobile-ios-pop-in 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
+    will-change: transform, opacity;
+  }
+  html[data-platform="ios"][data-mobile-os="android"] .mobile-anim-push-in {
+    animation: mobile-android-push-in 260ms cubic-bezier(0.2, 0, 0, 1) both;
+    will-change: transform, opacity;
+  }
+  html[data-platform="ios"][data-mobile-os="android"] .mobile-anim-pop-in {
+    animation: mobile-android-pop-in 240ms cubic-bezier(0.2, 0, 0, 1) both;
+    will-change: transform, opacity;
+  }
+  html[data-platform="ios"] .mobile-swipe-dragging {
+    will-change: transform, border-radius;
+    box-shadow: -8px 0 28px rgba(0, 0, 0, 0.18);
+  }
+  html[data-platform="ios"] .now-playing-pane.fullscreen.mobile-sheet-opening {
+    animation: mobile-np-sheet-in 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
+    will-change: transform, opacity;
+  }
+  html[data-platform="ios"] .now-playing-pane.fullscreen.mobile-sheet-closing {
+    animation: mobile-np-sheet-out 240ms cubic-bezier(0.32, 0.72, 0, 1) both;
+    pointer-events: none !important;
+    will-change: transform, opacity;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html[data-platform="ios"] .mobile-anim-push-in,
+    html[data-platform="ios"] .mobile-anim-pop-in,
+    html[data-platform="ios"] .now-playing-pane.fullscreen.mobile-sheet-opening,
+    html[data-platform="ios"] .now-playing-pane.fullscreen.mobile-sheet-closing {
+      animation: none !important;
+    }
   }
 }
