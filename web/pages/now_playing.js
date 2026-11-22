@@ -3815,6 +3815,41 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     var host = _ensureSecondaryControls();
     if (!host || _secondaryControlsBound) return;
     _secondaryControlsBound = true;
+
+    // Material Design 3 Expressive connected button group press spring (reliable on touch + fast clicks)
+    var pressedBtn = null;
+    var pressedAt = 0;
+    var releaseTimer = null;
+    function _clearPressed(immediate) {
+      if (!pressedBtn) return;
+      var target = pressedBtn;
+      if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = null; }
+      var elapsed = performance.now() - pressedAt;
+      var remain = immediate ? 0 : Math.max(0, 115 - elapsed);
+      if (remain <= 0) {
+        target.classList.remove('is-pressed');
+        if (pressedBtn === target) pressedBtn = null;
+      } else {
+        releaseTimer = setTimeout(function () {
+          target.classList.remove('is-pressed');
+          if (pressedBtn === target) pressedBtn = null;
+          releaseTimer = null;
+        }, remain);
+      }
+    }
+    host.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      var btn = e.target.closest('[data-action]');
+      if (!btn || !host.contains(btn) || btn.disabled) return;
+      _clearPressed(true);
+      pressedBtn = btn;
+      pressedAt = performance.now();
+      btn.classList.add('is-pressed');
+    });
+    host.addEventListener('pointerup', function () { _clearPressed(false); });
+    host.addEventListener('pointercancel', function () { _clearPressed(true); });
+    host.addEventListener('pointerleave', function () { _clearPressed(false); });
+
     host.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-action]');
       if (!btn || !host.contains(btn)) return;

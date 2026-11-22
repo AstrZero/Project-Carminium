@@ -5012,7 +5012,7 @@ padding: 0;
 .np-control-pill {
   flex: 1;
   height: 48px;
-  border-radius: var(--md-sys-shape-corner-full);
+  border-radius: 24px;
   background: var(--md-surface-container-high);
   color: var(--md-on-surface);
   display: inline-flex;
@@ -5067,9 +5067,11 @@ padding: 0;
 }
 
 .np-secondary-controls {
-
   --np-seg-height: 44px;
   --np-seg-outer: calc(var(--np-seg-height) / 2);
+  --np-seg-inner: var(--md-sys-shape-corner-small);
+  --np-seg-pressed: var(--md-sys-shape-corner-extra-small);
+  --np-seg-active-pressed: var(--md-sys-shape-corner-medium);
   display: flex;
   align-items: stretch;
   background: transparent;
@@ -5083,53 +5085,96 @@ padding: 0;
 }
 
 .np-secondary-controls > button {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
   height: var(--np-seg-height);
   border: none;
-  border-radius: var(--md-sys-shape-corner-small);
+  border-radius: var(--np-seg-inner);
   background: var(--md-surface-container-high);
   color: var(--md-on-surface);
   font-family: inherit;
   cursor: pointer;
   transition: background var(--motion-effects-fast),
               color var(--motion-effects-fast),
-              border-radius var(--motion-spatial-fast);
+              border-radius var(--motion-spatial-fast),
+              flex-grow var(--motion-spatial-fast),
+              padding var(--motion-spatial-fast);
 }
 
 .np-secondary-controls > button:first-child {
-  border-radius: var(--np-seg-outer) var(--md-sys-shape-corner-small) var(--md-sys-shape-corner-small) var(--np-seg-outer);
+  border-radius: var(--np-seg-outer) var(--np-seg-inner) var(--np-seg-inner) var(--np-seg-outer);
 }
 .np-secondary-controls > button:last-child {
-  border-radius: var(--md-sys-shape-corner-small) var(--np-seg-outer) var(--np-seg-outer) var(--md-sys-shape-corner-small);
+  border-radius: var(--np-seg-inner) var(--np-seg-outer) var(--np-seg-outer) var(--np-seg-inner);
+}
+.np-secondary-controls > button:only-child {
+  border-radius: var(--np-seg-outer);
 }
 
 .np-secondary-controls > button:hover {
   background: var(--md-surface-container-highest);
   color: var(--md-on-surface);
 }
-.np-secondary-controls > button:active {
+
+/* Material Design 3 Expressive Connected Button Group:
+   Pressing expands the active segment smoothly (pushing neighbors) & morphs inner corners */
+.np-secondary-controls > button:not(:disabled):active,
+.np-secondary-controls > button:not(:disabled).is-pressed {
+  flex-grow: 1.24;
   background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-pressed-state-layer-opacity), var(--md-surface-container-high));
+  border-radius: var(--np-seg-pressed);
+}
+.np-secondary-controls > button:first-child:not(:disabled):active,
+.np-secondary-controls > button:first-child:not(:disabled).is-pressed {
+  border-radius: var(--np-seg-outer) var(--np-seg-pressed) var(--np-seg-pressed) var(--np-seg-outer);
+}
+.np-secondary-controls > button:last-child:not(:disabled):active,
+.np-secondary-controls > button:last-child:not(:disabled).is-pressed {
+  border-radius: var(--np-seg-pressed) var(--np-seg-outer) var(--np-seg-outer) var(--np-seg-pressed);
+}
+.np-secondary-controls > button:only-child:not(:disabled):active,
+.np-secondary-controls > button:only-child:not(:disabled).is-pressed {
+  border-radius: var(--np-seg-active-pressed);
 }
 
+/* Checked pill uses exact half-height radius (22px, NOT 9999px) so CSS spring morphs smoothly across full 350ms */
 .np-secondary-controls > button.active {
-  border-radius: var(--md-sys-shape-corner-full);
+  border-radius: var(--np-seg-outer);
   color: var(--md-on-secondary-container);
   background: var(--md-secondary-container);
 }
 .np-secondary-controls > button.active:hover {
   background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), var(--md-secondary-container));
 }
+.np-secondary-controls > button.active:not(:disabled):active,
+.np-secondary-controls > button.active:not(:disabled).is-pressed {
+  border-radius: var(--np-seg-active-pressed);
+  background: color-mix(in srgb, var(--md-on-secondary-container) var(--md-sys-state-pressed-state-layer-opacity), var(--md-secondary-container));
+}
 
 .np-secondary-controls > button.liked {
-  border-radius: var(--md-sys-shape-corner-full);
+  border-radius: var(--np-seg-outer);
   color: var(--md-on-error-container);
   background: var(--md-error-container);
 }
 .np-secondary-controls > button.liked:hover {
   background: color-mix(in srgb, var(--md-on-surface) var(--md-sys-state-hover-state-layer-opacity), var(--md-error-container));
 }
+.np-secondary-controls > button.liked:not(:disabled):active,
+.np-secondary-controls > button.liked:not(:disabled).is-pressed {
+  border-radius: var(--np-seg-active-pressed);
+  background: color-mix(in srgb, var(--md-on-error-container) var(--md-sys-state-pressed-state-layer-opacity), var(--md-error-container));
+}
 
-.np-secondary-controls > button .material-symbols-rounded { font-size: 20px; }
+.np-secondary-controls > button .material-symbols-rounded {
+  font-size: 20px;
+  transition: transform var(--motion-spatial-fast);
+}
+.np-secondary-controls > button:not(:disabled):active .material-symbols-rounded,
+.np-secondary-controls > button:not(:disabled).is-pressed .material-symbols-rounded {
+  transform: scale(0.92);
+}
 
 .np-secondary-controls > .np-audio-mode-btn {
   flex: 0 0 auto;
@@ -5138,6 +5183,11 @@ padding: 0;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.5px;
+}
+.np-secondary-controls > .np-audio-mode-btn:not(:disabled):active,
+.np-secondary-controls > .np-audio-mode-btn:not(:disabled).is-pressed {
+  flex-grow: 0;
+  padding: 0 20px;
 }
 .np-audio-mode-label {
   display: inline-block;

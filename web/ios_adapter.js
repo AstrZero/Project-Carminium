@@ -592,6 +592,8 @@
   var _subpageTitleText = '';
   var _wasSubpage = false;
   var _suppressNextPopAnim = false;
+  var _pendingRevealEl = null;
+  var _pendingRevealTimer = null;
 
   function _clearInlineMotion(el) {
     if (!el) return;
@@ -599,7 +601,28 @@
     el.style.transform = '';
     el.style.borderRadius = '';
     el.style.opacity = '';
+    el.style.visibility = '';
     el.classList.remove('mobile-swipe-dragging');
+  }
+
+  function _releasePendingReveal() {
+    if (_pendingRevealTimer) {
+      clearTimeout(_pendingRevealTimer);
+      _pendingRevealTimer = null;
+    }
+    if (_pendingRevealEl) {
+      var el = _pendingRevealEl;
+      _pendingRevealEl = null;
+      _clearInlineMotion(el);
+    }
+  }
+
+  function _holdElementHiddenUntilNextRender(el) {
+    if (!el) return;
+    _releasePendingReveal();
+    _pendingRevealEl = el;
+    el.style.visibility = 'hidden';
+    _pendingRevealTimer = setTimeout(_releasePendingReveal, 450);
   }
 
   function _playPageTransition(el, kind) {
@@ -698,6 +721,8 @@
       }
     }
 
+    _releasePendingReveal();
+
     if (!opts.skipAnim && !isSettingsDetail && !document.body.classList.contains('np-fullscreen')) {
       var container = document.getElementById('page-container');
       if (isSub && !prevSub) {
@@ -745,8 +770,9 @@
   function _exitSettingsDetail(skipAnim) {
     if (!document.body.classList.contains('ios-settings-detail')) return false;
     var sc = document.querySelector('.settings-content');
-    _clearInlineMotion(sc);
+    // Hide Level-2 BEFORE clearing inline drag transform so it never flashes back at x=0
     document.body.classList.remove('ios-settings-detail');
+    _clearInlineMotion(sc);
     _setSubpageTitle('');
     var pane = document.getElementById('content-pane');
     if (pane) pane.scrollTop = 0;
@@ -811,6 +837,8 @@
 
   // ── 3. iPhone Playback Sheet: Mini Player <-> Fullscreen (No Sidebar) ─
 
+  var _suppressSegCapture = false;
+
   function _setPhoneNpMode(mode) {
     var pane = document.getElementById('now-playing-pane');
     if (!pane) return;
@@ -819,7 +847,12 @@
     if (qPanel) qPanel.classList.remove('active');
     var targetSeg = pane.querySelector('.np-content-seg[data-mode="' + mode + '"]');
     if (targetSeg) {
-      targetSeg.click();
+      _suppressSegCapture = true;
+      try {
+        targetSeg.click();
+      } finally {
+        _suppressSegCapture = false;
+      }
     } else {
       pane.classList.remove('np-content-solo', 'np-content-duo', 'np-content-lyrics');
       pane.classList.add('np-content-' + mode);
@@ -1405,12 +1438,17 @@
       });
     }
 
-    // Clicking solo or lyrics segment: capture BEFORE cover rect (capture phase),
-    // let now_playing.js switch mode, then run Apple Music shared-element cover morph + stagger!
-    document.querySelectorAll('.np-content-seg').forEach(function (seg) {
-      var pendingSnap = null;
-      seg.addEventListener('click', function () {
-        if (!_isPhone()) return;
+    // Clicking solo or lyrics segment inside #np-content-switch:
+    // Hook parent #np-content-switch in CAPTURE (strictly BEFORE now_playing.js target listener)
+    // and BUBBLE (strictly AFTER now_playing.js setContentMode updates DOM classes),
+    // guaranteeing shared-element cover morph + bottom control glide NEVER miss!
+    var contentSwitch = document.getElementById('np-content-switch');
+    if (contentSwitch) {
+      var pendingSegSnap = null;
+      contentSwitch.addEventListener('click', function (e) {
+        if (_suppressSegCapture || !_isPhone()) return;
+        var seg = e.target.closest('.np-content-seg');
+        if (!seg) return;
         var pane = document.getElementById('now-playing-pane');
         if (!pane || !pane.classList.contains('fullscreen')) return;
         var targetMode = seg.getAttribute('data-mode');
@@ -1418,25 +1456,28 @@
         var curIsLyrics = !curIsQueue && pane.classList.contains('np-content-lyrics');
         var curIsSolo = !curIsQueue && pane.classList.contains('np-content-solo');
         if ((targetMode === 'solo' && curIsSolo) || (targetMode === 'lyrics' && curIsLyrics)) {
-          pendingSnap = null;
+          pendingSegSnap = null;
           return;
         }
-        pendingSnap = _captureNpModeTransition(pane);
+        pendingSegSnap = _captureNpModeTransition(pane);
       }, true);
 
-      seg.addEventListener('click', function () {
+      contentSwitch.addEventListener('click', function (e) {
+        if (_suppressSegCapture) return;
+        var seg = e.target.closest('.np-content-seg');
+        if (!seg) return;
         var pane = document.getElementById('now-playing-pane');
         if (!pane) return;
         pane.classList.remove('ios-queue-open');
         var qPanel = pane.querySelector('.np-panel--queue');
         if (qPanel) qPanel.classList.remove('active');
-        if (pendingSnap && _isPhone()) {
-          var snap = pendingSnap;
-          pendingSnap = null;
+        if (pendingSegSnap && _isPhone()) {
+          var snap = pendingSegSnap;
+          pendingSegSnap = null;
           _playNpModeTransition(pane, snap);
         }
-      });
-    });
+      }, false);
+    }
 
     // Tapping top #np-mini-info in Lyrics / Queue view morphs smoothly back to Solo cover (Apple Music behavior)
     var npMiniInfo = document.getElementById('np-mini-info');
@@ -1651,9 +1692,15 @@
           target.style.transition = 'transform 200ms cubic-bezier(0.32, 0.72, 0, 1)';
           target.style.transform = 'translate3d(100%, 0, 0)';
           setTimeout(function () {
-            _clearInlineMotion(target);
-            _triggerActiveSubpageBack(false);
-          }, 195);
+            if (target.id === 'page-container') {
+              // Keep old detail DOM hidden until App.navigate() swaps in parent page (prevents exit flash!)
+              _holdElementHiddenUntilNextRender(target);
+              _triggerActiveSubpageBack(false);
+            } else {
+              _triggerActiveSubpageBack(false);
+              _clearInlineMotion(target);
+            }
+          }, 205);
         } else {
           target.style.transition = 'transform 240ms cubic-bezier(0.32, 0.72, 0, 1)';
           target.style.transform = 'translate3d(0, 0, 0)';
@@ -1716,11 +1763,13 @@
   // Android hardware/gesture Back handler (called by Kotlin OnBackPressedCallback)
   window.__carminiumHandleAndroidBack = function () {
     var pred = _getAndroidPredictiveTarget();
-    if (pred && pred.el) _clearInlineMotion(pred.el);
+    var predIsPageContainer = !!(pred && pred.el && pred.el.id === 'page-container');
+    if (pred && pred.el && !predIsPageContainer) _clearInlineMotion(pred.el);
 
     // 1. Close open modal dialogs / overlays
     var openDialog = document.querySelector('.dialog-overlay.open, .md-dialog-overlay.open');
     if (openDialog) {
+      if (predIsPageContainer) _clearInlineMotion(pred.el);
       var closeBtn = openDialog.querySelector('[data-role="close"], [data-role="cancel"], .dialog-close');
       if (closeBtn) {
         closeBtn.click();
@@ -1733,10 +1782,12 @@
     // 2. Close context menus or bottom-nav "More" popup
     var ctxMenu = document.querySelector('.context-menu.open, .context-menu:not([hidden])');
     if (ctxMenu && ctxMenu.offsetParent !== null) {
+      if (predIsPageContainer) _clearInlineMotion(pred.el);
       document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       return 'handled';
     }
     if (_morePopupEl && !_morePopupEl.hidden) {
+      if (predIsPageContainer) _clearInlineMotion(pred.el);
       _closeMorePopup();
       return 'handled';
     }
@@ -1765,11 +1816,13 @@
     if (document.body.classList.contains('ios-subpage')) {
       var backBtn = document.getElementById('title-bar-back');
       if (backBtn) {
+        if (predIsPageContainer) _holdElementHiddenUntilNextRender(pred.el);
         backBtn.click();
         return 'handled';
       }
     }
 
+    if (predIsPageContainer) _clearInlineMotion(pred.el);
     // 7. At top-level root page: minimize app to background so playback continues
     return 'minimize';
   };
