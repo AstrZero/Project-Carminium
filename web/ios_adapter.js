@@ -631,6 +631,8 @@
     var pane = document.getElementById('now-playing-pane');
     if (!pane) return;
     pane.classList.remove('ios-queue-open');
+    var qPanel = pane.querySelector('.np-panel--queue');
+    if (qPanel) qPanel.classList.remove('active');
     var targetSeg = pane.querySelector('.np-content-seg[data-mode="' + mode + '"]');
     if (targetSeg) {
       targetSeg.click();
@@ -640,10 +642,29 @@
     }
   }
 
+  function _refreshPhoneQueuePanel() {
+    var list = document.getElementById('np-queue-list');
+    var q = (window.App && App.state && Array.isArray(App.state.queue)) ? App.state.queue : [];
+    var idx = (window.App && App.state && typeof App.state.currentQueueIndex === 'number')
+      ? App.state.currentQueueIndex
+      : 0;
+    if (q.length > 0 && window.App && App.nowPlaying && typeof App.nowPlaying.updateQueue === 'function') {
+      App.nowPlaying.updateQueue(q, idx);
+    } else if (list && q.length === 0) {
+      list.innerHTML =
+        '<div class="ios-queue-empty">' +
+          '<span class="material-symbols-rounded">queue_music</span>' +
+          '<p>' + _t('np.queueEmpty', '播放队列为空') + '</p>' +
+        '</div>';
+    }
+  }
+
   function _openPhoneNowPlaying() {
     var pane = document.getElementById('now-playing-pane');
     if (!pane) return;
     pane.classList.remove('collapsed', 'ios-queue-open');
+    var qPanel = pane.querySelector('.np-panel--queue');
+    if (qPanel) qPanel.classList.remove('active');
     pane.classList.add('fullscreen');
     document.body.classList.remove('player-collapsed');
     document.body.classList.add('np-fullscreen');
@@ -660,6 +681,8 @@
     var pane = document.getElementById('now-playing-pane');
     if (!pane) return;
     pane.classList.remove('fullscreen', 'ios-queue-open');
+    var qPanel = pane.querySelector('.np-panel--queue');
+    if (qPanel) qPanel.classList.remove('active');
     pane.classList.add('collapsed');
     document.body.classList.remove('np-fullscreen');
     document.body.classList.add('player-collapsed');
@@ -702,10 +725,15 @@
         e.preventDefault();
         var pane = document.getElementById('now-playing-pane');
         if (!pane) return;
+        var qPanel = pane.querySelector('.np-panel--queue');
         if (pane.classList.contains('ios-queue-open')) {
           _setPhoneNpMode('solo');
         } else {
           pane.classList.add('ios-queue-open');
+          if (qPanel) qPanel.classList.add('active');
+          requestAnimationFrame(function () {
+            _refreshPhoneQueuePanel();
+          });
         }
       });
     }
@@ -714,7 +742,10 @@
     document.querySelectorAll('.np-content-seg').forEach(function (seg) {
       seg.addEventListener('click', function () {
         var pane = document.getElementById('now-playing-pane');
-        if (pane) pane.classList.remove('ios-queue-open');
+        if (!pane) return;
+        pane.classList.remove('ios-queue-open');
+        var qPanel = pane.querySelector('.np-panel--queue');
+        if (qPanel) qPanel.classList.remove('active');
       });
     });
 

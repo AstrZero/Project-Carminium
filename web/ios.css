@@ -72,6 +72,8 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     --ios-bottom-nav-h: 64px;
     --ios-mini-h: 60px;
     --ios-subbar-h: 48px;
+    --ios-page-px: 16px;
+    --track-list-inset: var(--ios-page-px);
   }
 
   /* 1. Root Shell: single-column content + fixed bottom nav bar */
@@ -167,8 +169,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
 
   /* 3. Content pane: full width + safe top + extra top bar space when on a 2nd-level page */
   html[data-platform="ios"] .content-pane,
-  html[data-platform="ios"] body.player-collapsed .content-pane,
-  html[data-platform="ios"] body.settings-active .content-pane {
+  html[data-platform="ios"] body.player-collapsed .content-pane {
     width: 100%;
     height: 100%;
     margin: 0 !important;
@@ -176,6 +177,17 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     clip-path: none !important;
     padding-top: var(--ios-safe-top);
     padding-bottom: calc(var(--ios-bottom-nav-h) + var(--ios-mini-h) + 20px + var(--ios-safe-bottom)) !important;
+    box-sizing: border-box;
+    -webkit-overflow-scrolling: touch;
+  }
+  html[data-platform="ios"] body.settings-active .content-pane {
+    width: 100%;
+    height: 100%;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    clip-path: none !important;
+    padding-top: var(--ios-safe-top);
+    padding-bottom: calc(var(--ios-bottom-nav-h) + 16px + var(--ios-safe-bottom)) !important;
     box-sizing: border-box;
     -webkit-overflow-scrolling: touch;
   }
@@ -257,10 +269,10 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     display: none !important;
   }
 
-  /* 5. Floating Mini Player lifted directly above Bottom Navigation Bar */
+  /* 5. Floating Mini Player lifted directly above Bottom Navigation Bar
+        (Hidden on Settings page, fullscreen Now Playing, and Onboarding) */
   html[data-platform="ios"] .mini-player,
-  html[data-platform="ios"] body:not(.player-collapsed) .mini-player,
-  html[data-platform="ios"] body.settings-active .mini-player {
+  html[data-platform="ios"] body:not(.player-collapsed) .mini-player {
     display: flex !important;
     position: fixed !important;
     left: 10px;
@@ -274,6 +286,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     box-shadow: var(--md-sys-elevation-level2);
   }
 
+  html[data-platform="ios"] body.settings-active .mini-player,
   html[data-platform="ios"] body.np-fullscreen .mini-player,
   html[data-platform="ios"] body.onboarding-active .mini-player {
     display: none !important;
@@ -295,41 +308,59 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     gap: 4px;
   }
 
-  /* Lift floating page_dock search bar above Mini Player + Bottom Nav */
+  /* Disable desktop floating page-dock search bar & shadow completely on iPhone */
   html[data-platform="ios"] .page-dock-layer,
-  html[data-platform="ios"] .page-dock {
-    bottom: calc(var(--ios-bottom-nav-h) + var(--ios-mini-h) + 18px + var(--ios-safe-bottom)) !important;
+  html[data-platform="ios"] .page-dock,
+  html[data-platform="ios"] .page-dock-ghost {
+    display: none !important;
   }
 
-  /* 6. Page Headers on iPhone (Music page single-line title + icon-only sort button) */
+  /* 6. Uniform Page Margins (--ios-page-px: 16px) & Right-Aligned Sort / Actions */
   html[data-platform="ios"] .page-header {
-    padding: 16px 16px 10px !important;
+    padding: 14px var(--ios-page-px) 10px !important;
     gap: 10px !important;
+    display: flex !important;
     align-items: center !important;
+    justify-content: space-between !important;
     flex-wrap: nowrap !important;
+    box-sizing: border-box !important;
   }
   html[data-platform="ios"] .page-header-left {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 2px !important;
     min-width: 0;
     flex: 1 1 auto;
   }
   html[data-platform="ios"] .page-title {
     font-size: 24px !important;
-    line-height: 1.25 !important;
+    line-height: 1.2 !important;
     white-space: nowrap !important;
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 100%;
   }
   html[data-platform="ios"] .page-subtitle {
+    margin-top: 0 !important;
+    font-size: 13px !important;
+    line-height: 1.3 !important;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 100%;
   }
   html[data-platform="ios"] .page-header-right,
   html[data-platform="ios"] .page-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 8px !important;
+    margin-left: auto !important;
+    flex-shrink: 0 !important;
+  }
+  html[data-platform="ios"] .page-header > #sort-select {
+    margin-left: auto !important;
   }
   html[data-platform="ios"] .page-header .btn-filled,
   html[data-platform="ios"] #btn-play-all,
@@ -365,8 +396,77 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     min-width: 176px !important;
   }
 
-  html[data-platform="ios"] .search-bar {
-    margin-inline: 16px !important;
+  html[data-platform="ios"] .search-bar,
+  html[data-platform="ios"] .search-bar--hero {
+    margin: 0 var(--ios-page-px) 10px !important;
+    box-sizing: border-box !important;
+  }
+  html[data-platform="ios"] .music-filter-chips {
+    margin-inline: var(--ios-page-px) !important;
+  }
+  html[data-platform="ios"] .music-filter-chips:empty {
+    display: none !important;
+  }
+  html[data-platform="ios"] .track-list,
+  html[data-platform="ios"] .artist-list,
+  html[data-platform="ios"] .folder-list,
+  html[data-platform="ios"] .search-artist-list {
+    padding: 4px var(--ios-page-px) 24px !important;
+    box-sizing: border-box !important;
+  }
+  html[data-platform="ios"] .album-grid {
+    padding: 4px var(--ios-page-px) 24px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+    box-sizing: border-box !important;
+  }
+  html[data-platform="ios"] .ym-page {
+    --ym-gutter: var(--ios-page-px) !important;
+  }
+  html[data-platform="ios"] .ym-stats-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+  html[data-platform="ios"] .ym-stat-card {
+    padding: 14px 16px !important;
+    border-radius: 20px !important;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  html[data-platform="ios"] .ym-stat-card:nth-child(3) {
+    grid-column: 1 / -1 !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+  }
+  html[data-platform="ios"] .ym-stat-card:nth-child(3) .ym-stat-value {
+    margin-top: 0 !important;
+  }
+  html[data-platform="ios"] .ym-stat-value {
+    font-size: 26px !important;
+  }
+  html[data-platform="ios"] .ym-stats-chart-card {
+    margin-top: 12px !important;
+    padding: 16px !important;
+    border-radius: 20px !important;
+    box-sizing: border-box;
+  }
+  html[data-platform="ios"] .ym-stats-lists {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    margin-top: 12px !important;
+  }
+  html[data-platform="ios"] .ym-top-list {
+    padding: 16px !important;
+    border-radius: 20px !important;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  html[data-platform="ios"] .ym-top-item-name {
+    font-size: 14px !important;
+  }
+  html[data-platform="ios"] .ym-top-item-sub {
+    font-size: 12px !important;
   }
 
   /* 7. Now Playing Sheet on iPhone:
@@ -428,7 +528,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   }
 
   /* Mode 1: solo (no lyrics) — original cover + 3-line info + progress + controls */
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo:not(.ios-queue-open) {
     grid-template-columns: 1fr !important;
     grid-template-rows: auto 1fr auto auto !important;
     grid-template-areas:
@@ -437,28 +537,33 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
       "main"
       "secondary" !important;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo .np-mini-info {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo:not(.ios-queue-open) .np-mini-info {
     display: none !important;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo .np-panel--info.active {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo:not(.ios-queue-open) .np-panel--info.active {
     display: flex !important;
     flex-direction: column;
     justify-content: center;
     gap: 14px;
     min-height: 0;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo .np-cover-wrap {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo:not(.ios-queue-open) .np-cover-wrap {
     display: flex;
     justify-content: center;
     align-items: center;
     flex: 1 1 auto;
     min-height: 0;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo .np-cover {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo:not(.ios-queue-open) .np-cover {
     width: min(82vw, 340px, 40dvh);
     height: min(82vw, 340px, 40dvh);
     max-width: 100%;
     max-height: 100%;
+  }
+  /* Generous touch hit target for progress bar dragging on iPhone */
+  html[data-platform="ios"] .now-playing-pane.fullscreen .np-progress-bar {
+    height: 34px !important;
+    touch-action: none !important;
   }
 
   /* Match exact width & horizontal alignment between main controls and secondary controls */
@@ -478,7 +583,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   }
 
   /* Mode 2: lyrics only — #np-mini-info at top WITHOUT rounded-rect background */
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics:not(.ios-queue-open) {
     grid-template-columns: 1fr !important;
     grid-template-rows: auto auto 1fr auto !important;
     grid-template-areas:
@@ -487,7 +592,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
       "lyrics"
       "main" !important;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-info,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics:not(.ios-queue-open) .np-mini-info,
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-mini-info {
     display: flex !important;
     grid-area: mini;
@@ -500,7 +605,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     box-shadow: none !important;
     min-width: 0;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-cover,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics:not(.ios-queue-open) .np-mini-cover,
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-mini-cover {
     width: 48px;
     height: 48px;
@@ -508,7 +613,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     flex-shrink: 0;
     overflow: hidden;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-text,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics:not(.ios-queue-open) .np-mini-text,
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-mini-text {
     flex: 1 1 auto;
     min-width: 0;
@@ -516,7 +621,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     flex-direction: column;
     gap: 2px;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-title,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics:not(.ios-queue-open) .np-mini-title,
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-mini-title {
     font-size: 16px;
     font-weight: 600;
@@ -526,7 +631,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-artist,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics:not(.ios-queue-open) .np-mini-artist,
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-mini-artist {
     font-size: 13px;
     line-height: 1.3;
@@ -536,16 +641,16 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-panel--lyrics.active {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics:not(.ios-queue-open) .np-panel--lyrics.active {
     grid-area: lyrics;
     display: flex !important;
     padding-top: 0 !important;
     min-height: 0;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-lyrics:not(:has(.np-lyrics-placeholder)) {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics:not(.ios-queue-open) .np-lyrics:not(:has(.np-lyrics-placeholder)) {
     padding: 20% 8px 34% !important;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-lyrics:has(.np-lyrics-placeholder) {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics:not(.ios-queue-open) .np-lyrics:has(.np-lyrics-placeholder) {
     width: 100%;
     height: 100%;
     display: flex !important;
@@ -570,15 +675,53 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
       "main" !important;
   }
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-panel--info,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-panel--info.active,
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-panel--lyrics,
-  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-secondary-controls {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-panel--lyrics.active,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-secondary-controls,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-pivot {
     display: none !important;
   }
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-panel--queue {
     display: flex !important;
-    grid-area: queue;
+    flex-direction: column !important;
+    grid-area: queue !important;
     position: relative !important;
-    min-height: 0;
+    inset: auto !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-panel--queue .np-queue-list {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    min-height: 0 !important;
+    padding: 4px 0 12px !important;
+    box-sizing: border-box !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  html[data-platform="ios"] .ios-queue-empty {
+    width: 100%;
+    height: 100%;
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--md-on-surface-variant);
+    opacity: 0.72;
+  }
+  html[data-platform="ios"] .ios-queue-empty .material-symbols-rounded {
+    font-size: 40px;
+  }
+  html[data-platform="ios"] .ios-queue-empty p {
+    margin: 0;
+    font-size: 14px;
   }
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-ios-queue-btn {
     background: var(--md-secondary-container);
@@ -591,9 +734,11 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     position: relative !important;
     display: flex !important;
     flex-direction: column !important;
+    width: 100% !important;
     height: auto !important;
     min-height: 100%;
     overflow: visible !important;
+    box-sizing: border-box !important;
   }
 
   /* Level 1: Category List */
@@ -601,16 +746,19 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     display: flex !important;
     flex-direction: column !important;
     width: 100% !important;
-    padding: 12px 16px 24px !important;
+    max-width: 100% !important;
+    padding: 12px var(--ios-page-px) 24px !important;
     border-right: none !important;
     background: transparent !important;
     overflow: visible !important;
+    box-sizing: border-box !important;
   }
   html[data-platform="ios"] body:not(.ios-settings-detail) .settings-content {
     display: none !important;
   }
   html[data-platform="ios"] .settings-nav-header {
     padding: 6px 4px 14px !important;
+    box-sizing: border-box !important;
   }
   html[data-platform="ios"] .settings-nav-header-title {
     font-size: 28px !important;
@@ -620,7 +768,8 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     display: flex !important;
     flex-direction: column !important;
     gap: 2px !important;
-    width: 100%;
+    width: 100% !important;
+    box-sizing: border-box !important;
   }
   html[data-platform="ios"] .settings-nav-item {
     width: 100% !important;
@@ -633,6 +782,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     align-items: center !important;
     justify-content: flex-start !important;
     gap: 14px !important;
+    box-sizing: border-box !important;
   }
   html[data-platform="ios"] .settings-nav-item:first-child {
     border-top-left-radius: 20px !important;
@@ -665,8 +815,15 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   html[data-platform="ios"] body.ios-settings-detail .settings-content {
     display: block !important;
     flex: 1 1 auto;
-    padding: 8px 14px 28px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 8px var(--ios-page-px) 28px !important;
     overflow: visible !important;
+    box-sizing: border-box !important;
+  }
+  html[data-platform="ios"] .settings-group,
+  html[data-platform="ios"] .settings-row {
+    box-sizing: border-box !important;
   }
 
   /* Stack wide settings controls onto 2 clean rows on iPhone (keep .toggle switches 1-row) */
@@ -723,10 +880,11 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     display: none !important;
   }
   html[data-platform="ios"] .ios-more-page {
-    padding: 16px 14px 28px;
+    padding: 16px var(--ios-page-px) 28px;
     display: flex;
     flex-direction: column;
     gap: 14px;
+    box-sizing: border-box;
   }
   html[data-platform="ios"] .ios-more-page-title {
     margin: 0;
