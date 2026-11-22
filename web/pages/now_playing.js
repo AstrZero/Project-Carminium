@@ -4593,16 +4593,23 @@ if (_videoBg) _videoBg.onFullscreenChange();
 
 function _updateLyricsSourceBadge() {
   if (!els.lyricsSource) return;
+  var t = function (key, fallback) {
+    if (window.App && App.i18n && App.i18n.t) {
+      var v = App.i18n.t(key);
+      if (v && v !== key) return v;
+    }
+    return fallback;
+  };
   var labels = {
-    'embedded': 'EMBEDDED',
-    'ncm': 'NETEASE CLOUD MUSIC',
-    'qqmusic': 'QQ MUSIC',
-    'lrclib': 'LRCLIB',
-    'amll': 'AMLL TTML DB',
-    'subsonic': 'EMBEDDED(SUBSONIC)',
+    'embedded': t('np.lyricsBadgeEmbedded', '内嵌'),
+    'ncm': t('np.lyricsBadgeNcm', '网易云'),
+    'qqmusic': t('np.lyricsBadgeQq', 'QQ音乐'),
+    'lrclib': t('np.lyricsBadgeLrclib', 'LRCLIB'),
+    'amll': t('np.lyricsBadgeAmll', 'AMLL'),
+    'subsonic': t('np.lyricsBadgeSubsonic', '远程内嵌'),
   };
   var displaySource = lyricsSource || lyricsSearchSource;
-  var label = labels[displaySource] || labels[lyricsSearchSource] || 'SELECT SOURCE';
+  var label = labels[displaySource] || labels[lyricsSearchSource] || t('np.lyricsBadgeSelect', '选择词源');
   els.lyricsSource.style.display = '';
   if (els.lyricsSourceLabel) {
     els.lyricsSourceLabel.textContent = label;
