@@ -279,7 +279,8 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     right: 10px;
     bottom: calc(var(--ios-bottom-nav-h) + 8px + var(--ios-safe-bottom)) !important;
     height: var(--ios-mini-h);
-    padding: 0 10px 0 12px;
+    /* Inner height = 60px - 2px border = 58px -> cover (48px): 5px; next btn (40px): 9px */
+    padding: 0 9px 0 5px;
     gap: 10px;
     z-index: 810;
     border: 1px solid color-mix(in srgb, var(--md-outline-variant) 38%, transparent);

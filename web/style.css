@@ -2768,7 +2768,8 @@ z-index: 1;
   overflow: hidden;
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  /* Left: (64 - 48 cover)/2 = 8px; Right: (64 - 40 button)/2 = 12px */
+  padding: 0 12px 0 8px;
   gap: 16px;
   z-index: 50;
   transition: transform var(--motion-medium) var(--ease-standard);
@@ -3136,7 +3137,7 @@ z-index: 1;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 4px;
+  padding: 0;
   flex: 1 1 0;
   justify-content: flex-end;
 }
