@@ -185,4 +185,11 @@ impl<R: Runtime> CarminiumAudio<R> {
             .await
             .map_err(Into::into)
     }
+
+    pub async fn get_diagnostics(&self) -> crate::Result<AudioDiagnosticsResponse> {
+        self.handle
+            .run_mobile_plugin_async("getDiagnostics", ())
+            .await
+            .map_err(Into::into)
+    }
 }

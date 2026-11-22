@@ -71,6 +71,10 @@ private struct HttpFetchResult: Encodable {
   let error: String?
 }
 
+private struct DiagnosticsResult: Encodable {
+  let text: String
+}
+
 private struct TickEvent: Encodable {
   var type: String = "tick"
   let positionMs: Double
@@ -124,6 +128,12 @@ class CarminiumAudioPlugin: Plugin {
   private var audioSessionConfigured: Bool = false
   private var remoteCommandsConfigured: Bool = false
   private var artworkGeneration: Int = 0
+  private var diagEvents: [String] = []
+  private lazy var diagFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateFormat = "HH:mm:ss.SSS"
+    return f
+  }()
 
   #if os(iOS)
   private var lastArtworkPath: String?
@@ -141,6 +151,25 @@ class CarminiumAudioPlugin: Plugin {
     #endif
   }
 
+  private func appendDiag(_ msg: String) {
+    let stamp = diagFormatter.string(from: Date())
+    let line = "[\(stamp)] \(msg)"
+    if Thread.isMainThread {
+      diagEvents.append(line)
+      if diagEvents.count > 45 {
+        diagEvents.removeFirst(diagEvents.count - 45)
+      }
+    } else {
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self else { return }
+        self.diagEvents.append(line)
+        if self.diagEvents.count > 45 {
+          self.diagEvents.removeFirst(self.diagEvents.count - 45)
+        }
+      }
+    }
+  }
+
   @objc public override func load(webview: WKWebView) {
     super.load(webview: webview)
     #if os(iOS)
@@ -150,6 +179,7 @@ class CarminiumAudioPlugin: Plugin {
       webview.scrollView.maximumZoomScale = 1.0
       webview.scrollView.pinchGestureRecognizer?.isEnabled = false
       self.ensureRemoteCommandsConfigured()
+      self.appendDiag("load(webview:) ok")
     }
     #endif
   }
@@ -405,6 +435,141 @@ class CarminiumAudioPlugin: Plugin {
     task.resume()
   }
 
+  @objc public func getDiagnostics(_ invoke: Invoke) {
+    #if os(iOS)
+    runOnMain {
+      var lines: [String] = []
+      let dev = UIDevice.current
+      lines.append("=== Device ===")
+      lines.append("OS: \(dev.systemName) \(dev.systemVersion) (\(dev.model))")
+
+      let bundle = Bundle.main
+      let bundleId = bundle.bundleIdentifier ?? "<nil>"
+      let displayName = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String) ?? "<nil>"
+      let execName = (bundle.object(forInfoDictionaryKey: "CFBundleExecutable") as? String) ?? "<nil>"
+      let bgModes = (bundle.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String]) ?? []
+      let hasSceneManifest = bundle.object(forInfoDictionaryKey: "UIApplicationSceneManifest") != nil
+      let hasUrlTypes = bundle.object(forInfoDictionaryKey: "CFBundleURLTypes") != nil
+      let bPath = bundle.bundlePath
+      let pathKind: String
+      if bPath.contains("LiveContainer") {
+        pathKind = "LiveContainer"
+      } else if bPath.contains("/var/containers/Bundle/Application/") {
+        pathKind = "Standard(/var/containers/Bundle/Application)"
+      } else {
+        pathKind = "Other(\(bPath.prefix(48)))"
+      }
+
+      lines.append("")
+      lines.append("=== Bundle & Info.plist ===")
+      lines.append("CFBundleIdentifier: \(bundleId)")
+      lines.append("CFBundleDisplayName: \(displayName)")
+      lines.append("CFBundleExecutable: \(execName)")
+      lines.append("BundlePathKind: \(pathKind)")
+      lines.append("UIBackgroundModes: \(bgModes.joined(separator: ","))")
+      lines.append("HasSceneManifest: \(hasSceneManifest)  HasURLTypes: \(hasUrlTypes)")
+
+      lines.append("")
+      lines.append("=== Provisioning Profile ===")
+      if let provPath = bundle.path(forResource: "embedded", ofType: "mobileprovision"),
+         let rawData = try? Data(contentsOf: URL(fileURLWithPath: provPath)),
+         let startRange = rawData.range(of: Data("<plist".utf8)),
+         let endRange = rawData.range(of: Data("</plist>".utf8), in: startRange.lowerBound..<rawData.endIndex) {
+        let xmlData = rawData.subdata(in: startRange.lowerBound..<endRange.upperBound)
+        if let plist = try? PropertyListSerialization.propertyList(from: xmlData, options: [], format: nil) as? [String: Any] {
+          let teamName = (plist["TeamName"] as? String) ?? "<nil>"
+          let provName = (plist["Name"] as? String) ?? "<nil>"
+          let allDevices = (plist["ProvisionsAllDevices"] as? Bool) ?? false
+          let devCount = (plist["ProvisionedDevices"] as? [Any])?.count ?? 0
+          let ents = (plist["Entitlements"] as? [String: Any]) ?? [:]
+          let appId = (ents["application-identifier"] as? String) ?? "<nil>"
+          let teamId = (ents["com.apple.developer.team-identifier"] as? String) ?? "<nil>"
+          let getTaskAllow = (ents["get-task-allow"] as? Bool) ?? false
+          let apsEnv = (ents["aps-environment"] as? String) ?? "<none>"
+
+          var matchDesc = "UNKNOWN"
+          if appId != "<nil>" && teamId != "<nil>" {
+            let prefix = teamId + "."
+            let suffix = appId.hasPrefix(prefix) ? String(appId.dropFirst(prefix.count)) : appId
+            if suffix == "*" {
+              matchDesc = "WILDCARD (*)"
+            } else if suffix == bundleId {
+              matchDesc = "EXACT_MATCH"
+            } else {
+              matchDesc = "MISMATCH (profile=\(suffix) vs info=\(bundleId))"
+            }
+          }
+          lines.append("TeamName: \(teamName)")
+          lines.append("ProfileName: \(provName)")
+          lines.append("Enterprise(AllDevices): \(allDevices)  DeviceCount: \(devCount)")
+          lines.append("application-identifier: \(appId)")
+          lines.append("BundleIdMatch: \(matchDesc)")
+          lines.append("get-task-allow: \(getTaskAllow)  aps: \(apsEnv)")
+        } else {
+          lines.append("embedded.mobileprovision found but plist parse failed")
+        }
+      } else {
+        lines.append("embedded.mobileprovision: MISSING (TrollStore / unsigned?)")
+      }
+
+      lines.append("")
+      lines.append("=== UIKit / UIScene ===")
+      let app = UIApplication.shared
+      let appDelName = app.delegate.map { String(describing: type(of: $0)) } ?? "<nil>"
+      lines.append("AppDelegate: \(appDelName)  AppState: \(app.applicationState.rawValue)")
+      let scenes = Array(app.connectedScenes)
+      lines.append("ConnectedScenes: \(scenes.count)")
+      for (idx, sc) in scenes.enumerated() {
+        let cfg = sc.session.configuration
+        let cfgName = cfg.name ?? "<nil>"
+        let cfgDel = cfg.delegateClass.map { NSStringFromClass($0) } ?? "<nil>"
+        let actDel = sc.delegate.map { String(describing: type(of: $0)) } ?? "<nil>"
+        lines.append("  [\(idx)] \(type(of: sc)) state=\(sc.activationState.rawValue) cfg=\(cfgName) cfgDel=\(cfgDel) actualDel=\(actDel)")
+      }
+
+      lines.append("")
+      lines.append("=== AVAudioSession ===")
+      let sess = AVAudioSession.sharedInstance()
+      let outputs = sess.currentRoute.outputs.map { "\($0.portType.rawValue)(\($0.portName))" }.joined(separator: ", ")
+      lines.append("Category: \(sess.category.rawValue)  Mode: \(sess.mode.rawValue)")
+      lines.append("Policy: \(sess.routeSharingPolicy.rawValue)  Options: \(sess.categoryOptions.rawValue)")
+      lines.append("OtherAudio: \(sess.isOtherAudioPlaying)  SilenceHint: \(sess.secondaryAudioShouldBeSilencedHint)  Vol: \(String(format: "%.2f", sess.outputVolume))")
+      lines.append("Outputs: \(outputs.isEmpty ? "<none>" : outputs)")
+
+      lines.append("")
+      lines.append("=== AVPlayer & NowPlaying ===")
+      if let p = self.player {
+        lines.append("Player: exists  timeControl=\(p.timeControlStatus.rawValue)  rate=\(p.rate)  isPlayingState=\(self.isPlayingState)")
+        lines.append("allowsExt=\(p.allowsExternalPlayback)  bgPolicy=\(p.audiovisualBackgroundPlaybackPolicy.rawValue)")
+      } else {
+        lines.append("Player: <nil>  isPlayingState=\(self.isPlayingState)")
+      }
+      let np = MPNowPlayingInfoCenter.default()
+      let info = np.nowPlayingInfo
+      let npTitle = (info?[MPMediaItemPropertyTitle] as? String) ?? "<nil>"
+      let npRate = (info?[MPNowPlayingInfoPropertyPlaybackRate] as? Double) ?? -1
+      let npElapsed = (info?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double) ?? -1
+      let npDur = (info?[MPMediaItemPropertyPlaybackDuration] as? Double) ?? -1
+      let npArt = (info?[MPMediaItemPropertyArtwork] != nil)
+      lines.append("NPInfo: keys=\(info?.count ?? 0)  title=\(npTitle)  rate=\(npRate)  pos=\(String(format: "%.1f", npElapsed))/\(String(format: "%.1f", npDur))  art=\(npArt)  pbState=\(np.playbackState.rawValue)")
+      let cc = MPRemoteCommandCenter.shared()
+      lines.append("RemoteCC: init=\(self.remoteCommandsConfigured) play=\(cc.playCommand.isEnabled) pause=\(cc.pauseCommand.isEnabled) toggle=\(cc.togglePlayPauseCommand.isEnabled) stop=\(cc.stopCommand.isEnabled)")
+
+      lines.append("")
+      lines.append("=== Recent Native Events (\(self.diagEvents.count)) ===")
+      if self.diagEvents.isEmpty {
+        lines.append("(none yet)")
+      } else {
+        lines.append(contentsOf: self.diagEvents)
+      }
+
+      invoke.resolve(DiagnosticsResult(text: lines.joined(separator: "\n")))
+    }
+    #else
+    invoke.resolve(DiagnosticsResult(text: "Diagnostics only available on iOS."))
+    #endif
+  }
+
   // MARK: - Core AVPlayer Logic
 
   private func handlePlay(_ args: PlayArgs) {
@@ -559,6 +724,7 @@ class CarminiumAudioPlugin: Plugin {
         }
         switch observedPlayer.timeControlStatus {
         case .playing:
+          self.appendDiag("kvo:timeControl=playing rate=\(observedPlayer.rate)")
           if !self.isPlayingState {
             self.isPlayingState = true
             self.updateNowPlayingPlaybackState(isPlaying: true)
@@ -566,6 +732,7 @@ class CarminiumAudioPlugin: Plugin {
             self.sendTickEvent()
           }
         case .paused:
+          self.appendDiag("kvo:timeControl=paused rate=\(observedPlayer.rate)")
           if self.isPlayingState {
             self.isPlayingState = false
             self.updateNowPlayingPlaybackState(isPlaying: false)
@@ -573,7 +740,7 @@ class CarminiumAudioPlugin: Plugin {
             self.sendTickEvent()
           }
         case .waitingToPlayAtSpecifiedRate:
-          break
+          self.appendDiag("kvo:timeControl=waiting")
         @unknown default:
           break
         }
@@ -623,10 +790,12 @@ class CarminiumAudioPlugin: Plugin {
       if !audioSessionConfigured {
         try session.setCategory(.playback, mode: .default, options: [])
         audioSessionConfigured = true
+        appendDiag("audioSession.setCategory(.playback) ok")
       }
       try session.setActive(true)
     } catch {
       NSLog("[CarminiumAudio] AVAudioSession activation error: \(error.localizedDescription)")
+      appendDiag("audioSession ERR: \(error.localizedDescription)")
     }
   }
 
@@ -642,6 +811,12 @@ class CarminiumAudioPlugin: Plugin {
       self,
       selector: #selector(handleAudioRouteChange(_:)),
       name: AVAudioSession.routeChangeNotification,
+      object: AVAudioSession.sharedInstance()
+    )
+    nc.addObserver(
+      self,
+      selector: #selector(handleSilenceSecondaryHint(_:)),
+      name: AVAudioSession.silenceSecondaryAudioHintNotification,
       object: AVAudioSession.sharedInstance()
     )
     nc.addObserver(
@@ -670,8 +845,14 @@ class CarminiumAudioPlugin: Plugin {
     )
   }
 
+  @objc private func handleSilenceSecondaryHint(_ notification: Notification) {
+    let typeVal = notification.userInfo?[AVAudioSessionSilenceSecondaryAudioHintTypeKey] as? UInt ?? 99
+    appendDiag("audio:silenceSecondaryHint type=\(typeVal)")
+  }
+
   @objc private func handleAppDidBecomeActive(_ notification: Notification) {
     runOnMain {
+      self.appendDiag("app:didBecomeActive")
       guard self.currentMetadata != nil else { return }
       self.updateNowPlayingPlaybackState(isPlaying: self.isPlayingState)
       self.sendTickEvent()
@@ -680,6 +861,7 @@ class CarminiumAudioPlugin: Plugin {
 
   @objc private func handleSceneDidActivate(_ notification: Notification) {
     runOnMain {
+      self.appendDiag("scene:didActivate")
       guard self.currentMetadata != nil else { return }
       self.updateNowPlayingPlaybackState(isPlaying: self.isPlayingState)
       self.sendTickEvent()
@@ -688,6 +870,7 @@ class CarminiumAudioPlugin: Plugin {
 
   @objc private func handleSceneDidEnterBackground(_ notification: Notification) {
     runOnMain {
+      self.appendDiag("scene:didEnterBackground")
       guard self.currentMetadata != nil else { return }
       self.updateNowPlayingPlaybackState(isPlaying: self.isPlayingState)
     }
@@ -696,6 +879,7 @@ class CarminiumAudioPlugin: Plugin {
   @objc private func handleMediaServicesReset(_ notification: Notification) {
     runOnMain {
       NSLog("[CarminiumAudio] AVAudioSession mediaServicesWereReset — rebuilding session & remote commands")
+      self.appendDiag("audio:mediaServicesWereReset")
       self.audioSessionConfigured = false
       self.remoteCommandsConfigured = false
       self.player?.pause()
@@ -713,8 +897,11 @@ class CarminiumAudioPlugin: Plugin {
       let typeVal = info[AVAudioSessionInterruptionTypeKey] as? UInt,
       let type = AVAudioSession.InterruptionType(rawValue: typeVal)
     else { return }
+    let reasonVal = info[AVAudioSessionInterruptionReasonKey] as? UInt ?? 999
+    let optVal = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
 
     DispatchQueue.main.async {
+      self.appendDiag("audio:interruption type=\(type == .began ? "began" : "ended") reason=\(reasonVal) opts=\(optVal)")
       switch type {
       case .began:
         self.wasInterruptedWhilePlaying = self.isPlayingState
@@ -726,7 +913,6 @@ class CarminiumAudioPlugin: Plugin {
           self.sendTickEvent()
         }
       case .ended:
-        let optVal = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
         let options = AVAudioSession.InterruptionOptions(rawValue: optVal)
         if self.wasInterruptedWhilePlaying && options.contains(.shouldResume) {
           self.ensureAudioSessionActive()
@@ -749,9 +935,14 @@ class CarminiumAudioPlugin: Plugin {
       let reasonVal = info[AVAudioSessionRouteChangeReasonKey] as? UInt,
       let reason = AVAudioSession.RouteChangeReason(rawValue: reasonVal)
     else { return }
+    let prevDesc = (info[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription)?
+      .outputs.map { $0.portType.rawValue }.joined(separator: ",") ?? "-"
+    let currDesc = AVAudioSession.sharedInstance().currentRoute
+      .outputs.map { $0.portType.rawValue }.joined(separator: ",")
 
-    if reason == .oldDeviceUnavailable {
-      DispatchQueue.main.async {
+    DispatchQueue.main.async {
+      self.appendDiag("audio:routeChange reason=\(reasonVal) prev=[\(prevDesc)] curr=[\(currDesc)]")
+      if reason == .oldDeviceUnavailable {
         if self.isPlayingState {
           self.player?.pause()
           self.isPlayingState = false
@@ -808,6 +999,7 @@ class CarminiumAudioPlugin: Plugin {
     cc.playCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
       self.runOnMain {
+        self.appendDiag("remote:play")
         self.performImmediateResume()
       }
       return .success
@@ -818,6 +1010,7 @@ class CarminiumAudioPlugin: Plugin {
     cc.pauseCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
       self.runOnMain {
+        self.appendDiag("remote:pause")
         self.performImmediatePause()
       }
       return .success
@@ -829,6 +1022,7 @@ class CarminiumAudioPlugin: Plugin {
       guard let self = self else { return .commandFailed }
       self.runOnMain {
         let currentlyPlaying = (self.player?.timeControlStatus == .playing) || self.isPlayingState
+        self.appendDiag("remote:toggle(playing=\(currentlyPlaying))")
         if currentlyPlaying {
           self.performImmediatePause()
         } else {
@@ -843,6 +1037,7 @@ class CarminiumAudioPlugin: Plugin {
     cc.stopCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
       self.runOnMain {
+        self.appendDiag("remote:stop")
         self.performImmediatePause()
       }
       return .success
@@ -852,6 +1047,7 @@ class CarminiumAudioPlugin: Plugin {
     cc.nextTrackCommand.isEnabled = true
     cc.nextTrackCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
+      self.appendDiag("remote:next")
       self.sendRemoteEvent(action: "next", positionMs: nil)
       return .success
     }
@@ -860,6 +1056,7 @@ class CarminiumAudioPlugin: Plugin {
     cc.previousTrackCommand.isEnabled = true
     cc.previousTrackCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
+      self.appendDiag("remote:prev")
       self.sendRemoteEvent(action: "prev", positionMs: nil)
       return .success
     }
@@ -873,6 +1070,7 @@ class CarminiumAudioPlugin: Plugin {
       else { return .commandFailed }
       let ms = max(0.0, posEvent.positionTime * 1000.0)
       self.runOnMain {
+        self.appendDiag("remote:seek(\(Int(ms))ms)")
         self.performSeek(positionMs: ms)
         self.sendRemoteEvent(action: "seek", positionMs: ms)
       }

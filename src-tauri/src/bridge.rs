@@ -308,6 +308,10 @@ pub async fn dispatch_bridge<R: Runtime>(
             let _ = app.carminium_audio().open_airplay();
             Value::Bool(true)
         }
+        "get_audio_diagnostics" => match app.carminium_audio().get_diagnostics().await {
+            Ok(res) => Value::String(res.text),
+            Err(e) => Value::String(format!("Diagnostics error: {e}")),
+        },
         "add_next" => {
             let raw = arg_str(&args, 0);
             if let Ok(track) = serde_json::from_str::<Track>(&raw) {

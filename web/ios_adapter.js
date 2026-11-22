@@ -142,6 +142,18 @@
                   });
                 },
               },
+              {
+                type: 'action',
+                bind: '_ios_audio_diagnostics',
+                icon: 'info',
+                label: '系统音频与灵动岛诊断',
+                sub: '查看 Bundle ID、签名描述文件、SceneDelegate、AVAudioSession 及 AirPods 事件实时日志',
+                buttonText: '打开诊断',
+                buttonIcon: 'info',
+                onAction: function () {
+                  _openIosDiagnosticsModal();
+                },
+              },
             ],
           });
         }
@@ -286,6 +298,69 @@
 
     renderModal();
     document.body.appendChild(overlay);
+  }
+
+  function _openIosDiagnosticsModal() {
+    var overlay = document.createElement('div');
+    overlay.className = 'dialog-overlay open';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100020;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.52);padding:16px;';
+
+    overlay.innerHTML = '' +
+      '<div class="md-dialog" style="background:var(--md-surface-container-high);border-radius:24px;padding:18px;width:min(460px,calc(100vw - 24px));max-height:82vh;display:flex;flex-direction:column;gap:12px;">' +
+        '<div style="font-size:17px;font-weight:600;color:var(--md-on-surface);">iOS 系统音频与灵动岛诊断</div>' +
+        '<textarea readonly data-role="diag-box" style="width:100%;height:52vh;min-height:240px;resize:none;border-radius:14px;border:1px solid var(--md-outline-variant);background:var(--md-surface-container-lowest);color:var(--md-on-surface);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.45;padding:10px;box-sizing:border-box;-webkit-user-select:text;user-select:text;">正在读取诊断信息…</textarea>' +
+        '<div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">' +
+          '<button type="button" class="btn-text" data-role="refresh">刷新</button>' +
+          '<button type="button" class="btn-tonal" data-role="copy">复制全部</button>' +
+          '<button type="button" class="btn-filled" data-role="close">关闭</button>' +
+        '</div>' +
+      '</div>';
+
+    var box = overlay.querySelector('[data-role="diag-box"]');
+
+    function loadDiag() {
+      if (box) box.value = '正在读取诊断信息…';
+      App.utils.call('get_audio_diagnostics').then(function (text) {
+        if (box) box.value = (typeof text === 'string' && text) ? text : String(text || '无返回数据');
+      }).catch(function (err) {
+        if (box) box.value = '读取失败: ' + (err && err.message ? err.message : String(err));
+      });
+    }
+
+    function close() {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    }
+
+    var refreshBtn = overlay.querySelector('[data-role="refresh"]');
+    var copyBtn = overlay.querySelector('[data-role="copy"]');
+    var closeBtn = overlay.querySelector('[data-role="close"]');
+    if (refreshBtn) refreshBtn.addEventListener('click', loadDiag);
+    if (closeBtn) closeBtn.addEventListener('click', close);
+    if (copyBtn) {
+      copyBtn.addEventListener('click', function () {
+        var content = box ? box.value : '';
+        if (!content) return;
+        function notifyOk() {
+          if (App.utils && App.utils.toast) App.utils.toast('诊断信息已复制');
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(content).then(notifyOk).catch(function () {
+            if (box) { box.focus(); box.select(); try { document.execCommand('copy'); } catch (_) {} }
+            notifyOk();
+          });
+        } else {
+          if (box) { box.focus(); box.select(); try { document.execCommand('copy'); } catch (_) {} }
+          notifyOk();
+        }
+      });
+    }
+
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) close();
+    });
+
+    document.body.appendChild(overlay);
+    loadDiag();
   }
 
   window.__iosBindSettingsSection = function (container, section, settings) {

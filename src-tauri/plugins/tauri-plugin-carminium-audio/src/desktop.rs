@@ -74,4 +74,10 @@ impl<R: Runtime> CarminiumAudio<R> {
             error: Some("desktop_unavailable".to_string()),
         })
     }
+
+    pub async fn get_diagnostics(&self) -> crate::Result<AudioDiagnosticsResponse> {
+        Ok(AudioDiagnosticsResponse {
+            text: "Diagnostics only available on iOS.".to_string(),
+        })
+    }
 }
