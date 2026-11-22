@@ -146,15 +146,17 @@ jobs:
             echo "Found existing src-tauri/gen/apple Xcode project; skipping tauri ios init."
           fi
 
-      - name: Generate iOS App Icons from build/icon.png
+      - name: Generate iOS App Icons from mobile padded icon
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f build/icon.png ]; then
+          ICON_SRC="src-tauri/icons/icon-mobile-ios.png"
+          [ -f "$ICON_SRC" ] || ICON_SRC="build/icon.png"
+          if [ -f "$ICON_SRC" ]; then
             if [ -x node_modules/.bin/tauri ]; then
-              npx tauri icon build/icon.png --ios-color '#111318' || true
+              npx tauri icon "$ICON_SRC" --ios-color '#F7F2F4' || true
             else
-              cargo tauri icon build/icon.png --ios-color '#111318' || true
+              cargo tauri icon "$ICON_SRC" --ios-color '#F7F2F4' || true
             fi
           fi
 
