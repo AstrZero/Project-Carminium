@@ -605,7 +605,7 @@
   function _playPageTransition(el, kind) {
     if (!el || !_isPhone()) return;
     _clearInlineMotion(el);
-    el.classList.remove('mobile-anim-push-in', 'mobile-anim-pop-in');
+    el.classList.remove('page-enter', 'mobile-anim-push-in', 'mobile-anim-pop-in');
     void el.offsetWidth;
     var cls = (kind === 'pop') ? 'mobile-anim-pop-in' : 'mobile-anim-push-in';
     el.classList.add(cls);
@@ -908,25 +908,62 @@
     return ghost;
   }
 
-  function _morphCover(fromRect, fromRadius, toEl, sourceEl, durationMs, easing) {
-    if (_reducedMotion() || !fromRect || !toEl || !toEl.animate) return;
-    if (fromRect.width < 4 || fromRect.height < 4) return;
-    var toRect = toEl.getBoundingClientRect();
-    if (toRect.width < 4 || toRect.height < 4) return;
+  function _morphCover(fromRect, fromRadius, toEl, sourceEl, durationMs, easing, premeasuredToRect, premeasuredToRadius) {
+    if (_reducedMotion() || !fromRect || !toEl || !toEl.animate) return false;
+    if (fromRect.width < 4 || fromRect.height < 4) return false;
+    var toRect = premeasuredToRect || toEl.getBoundingClientRect();
+    if (!toRect || toRect.width < 4 || toRect.height < 4) return false;
 
     _cancelActiveCoverMorph();
 
-    var toRadius = _readRadiusPx(toEl, 14);
-    var ghost = _spawnCoverGhost(sourceEl || toEl, toRect, toRadius);
+    var toRadius = (typeof premeasuredToRadius === 'number') ? premeasuredToRadius : _readRadiusPx(toEl, 14);
+    var growing = toRect.width >= fromRect.width;
+    // Always rasterize ghost at the LARGER box so shrinking stays razor-sharp (zero upscale blur)
+    var baseRect = growing ? toRect : fromRect;
+    var baseRadius = growing ? toRadius : fromRadius;
+    var ghost = _spawnCoverGhost(sourceEl || toEl, baseRect, baseRadius);
     _amCoverGhost = ghost;
     _amHiddenTarget = toEl;
     toEl.style.opacity = '0';
 
-    var dx = fromRect.left - toRect.left;
-    var dy = fromRect.top - toRect.top;
-    var sx = fromRect.width / toRect.width;
-    var sy = fromRect.height / toRect.height;
-    var startRadius = Math.round(fromRadius / Math.max(0.15, Math.min(sx, sy)));
+    var frames;
+    if (growing) {
+      var dx = fromRect.left - toRect.left;
+      var dy = fromRect.top - toRect.top;
+      var sx = fromRect.width / toRect.width;
+      var sy = fromRect.height / toRect.height;
+      var startRadius = Math.round(fromRadius / Math.max(0.12, Math.min(sx, sy)));
+      frames = [
+        {
+          transform: 'translate3d(' + dx.toFixed(1) + 'px, ' + dy.toFixed(1) + 'px, 0) scale(' + sx.toFixed(4) + ', ' + sy.toFixed(4) + ')',
+          borderRadius: startRadius + 'px',
+          boxShadow: '0 6px 18px rgba(0, 0, 0, 0.18)'
+        },
+        {
+          transform: 'translate3d(0px, 0px, 0) scale(1, 1)',
+          borderRadius: toRadius + 'px',
+          boxShadow: '0 16px 40px rgba(0, 0, 0, 0.28)'
+        }
+      ];
+    } else {
+      var sdx = toRect.left - fromRect.left;
+      var sdy = toRect.top - fromRect.top;
+      var ssx = toRect.width / fromRect.width;
+      var ssy = toRect.height / fromRect.height;
+      var endRadius = Math.round(toRadius / Math.max(0.12, Math.min(ssx, ssy)));
+      frames = [
+        {
+          transform: 'translate3d(0px, 0px, 0) scale(1, 1)',
+          borderRadius: fromRadius + 'px',
+          boxShadow: '0 16px 40px rgba(0, 0, 0, 0.28)'
+        },
+        {
+          transform: 'translate3d(' + sdx.toFixed(1) + 'px, ' + sdy.toFixed(1) + 'px, 0) scale(' + ssx.toFixed(4) + ', ' + ssy.toFixed(4) + ')',
+          borderRadius: endRadius + 'px',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.14)'
+        }
+      ];
+    }
 
     var finished = false;
     function finish() {
@@ -939,25 +976,15 @@
     }
     _amPendingCleanup = finish;
 
-    var anim = ghost.animate([
-      {
-        transform: 'translate3d(' + dx.toFixed(1) + 'px, ' + dy.toFixed(1) + 'px, 0) scale(' + sx.toFixed(4) + ', ' + sy.toFixed(4) + ')',
-        borderRadius: startRadius + 'px',
-        boxShadow: '0 6px 18px rgba(0, 0, 0, 0.18)'
-      },
-      {
-        transform: 'translate3d(0px, 0px, 0) scale(1, 1)',
-        borderRadius: toRadius + 'px',
-        boxShadow: '0 16px 40px rgba(0, 0, 0, 0.28)'
-      }
-    ], {
-      duration: durationMs || 420,
+    var anim = ghost.animate(frames, {
+      duration: durationMs || 400,
       easing: easing || _AM_SPRING,
       fill: 'forwards'
     });
     anim.onfinish = finish;
     anim.oncancel = finish;
-    setTimeout(finish, (durationMs || 420) + 90);
+    setTimeout(finish, (durationMs || 400) + 90);
+    return true;
   }
 
   function _getVisibleNpCoverEl(pane) {
@@ -1050,12 +1077,12 @@
   }
 
   function _resetMainDepth() {
-    var main = document.getElementById('app-main');
-    if (!main) return;
-    main.style.transition = '';
-    main.style.transform = '';
-    main.style.borderRadius = '';
-    main.style.filter = '';
+    var cp = document.getElementById('content-pane');
+    if (!cp) return;
+    cp.style.transition = '';
+    cp.style.transform = '';
+    cp.style.borderRadius = '';
+    cp.style.filter = '';
   }
 
   function _openPhoneNowPlaying() {
@@ -1069,7 +1096,7 @@
     _clearInlineMotion(pane);
     _resetMainDepth();
 
-    // Capture Mini Player bar & cover BEFORE hiding mini-player
+    // 1. Capture Mini Player bar & cover BEFORE hiding mini-player
     var mini = document.getElementById('mini-player');
     var miniCover = mini ? mini.querySelector('.mini-player-cover') : null;
     var miniRect = mini ? mini.getBoundingClientRect() : null;
@@ -1080,7 +1107,7 @@
     var qPanel = pane.querySelector('.np-panel--queue');
     if (qPanel) qPanel.classList.remove('active');
 
-    // Enforce 2-mode (solo or lyrics) on mobile before measuring target layout
+    // Enforce 2-mode (solo or lyrics) on mobile before measuring final layout
     if (pane.classList.contains('np-content-duo') ||
         (!pane.classList.contains('np-content-solo') && !pane.classList.contains('np-content-lyrics'))) {
       _setPhoneNpMode('solo');
@@ -1092,19 +1119,24 @@
     _syncSubpageState({ skipAnim: true });
 
     if (!_reducedMotion() && pane.animate) {
+      // 2. Measure target cover at its TRUE final resting position BEFORE starting pane.animate()!
+      //    (Otherwise pane's initial translateY offset shifts getBoundingClientRect() off-screen!)
+      var targetCover = _getVisibleNpCoverEl(pane);
+      var targetCoverRect = targetCover ? targetCover.getBoundingClientRect() : null;
+      var targetCoverRadius = _readRadiusPx(targetCover, 16);
+
       var startY = miniRect ? Math.max(0, miniRect.top) : window.innerHeight;
       pane.animate([
-        { transform: 'translate3d(0, ' + startY.toFixed(0) + 'px, 0)', borderRadius: '20px', opacity: 0.55 },
+        { transform: 'translate3d(0, ' + startY.toFixed(0) + 'px, 0)', borderRadius: '22px', opacity: 0.65 },
         { transform: 'translate3d(0, 0, 0)', borderRadius: '0px', opacity: 1 }
       ], {
-        duration: 420,
+        duration: 360,
         easing: _AM_SHEET_EASE,
         fill: 'none'
       });
 
-      var targetCover = _getVisibleNpCoverEl(pane);
-      if (miniCoverRect && targetCover) {
-        _morphCover(miniCoverRect, miniCoverRadius, targetCover, miniCover, 440, _AM_SPRING);
+      if (miniCoverRect && targetCover && targetCoverRect) {
+        _morphCover(miniCoverRect, miniCoverRadius, targetCover, miniCover, 400, _AM_SPRING, targetCoverRect, targetCoverRadius);
       }
 
       _animateStaggerIn([
@@ -1115,7 +1147,7 @@
         pane.querySelector('.np-main-controls'),
         pane.querySelector('.np-secondary-controls'),
         pane.querySelector('.np-panel--lyrics.active')
-      ], 18, 340, 65);
+      ], 16, 300, 60);
     }
   }
 
@@ -1150,13 +1182,12 @@
       return;
     }
 
-    // Capture current cover rect INSIDE fullscreen player before dismissing
+    // 1. Capture current cover rect INSIDE fullscreen player at resting (0,0)
     var fromCover = _getVisibleNpCoverEl(pane);
     var fromCoverRect = fromCover ? fromCover.getBoundingClientRect() : null;
     var fromCoverRadius = _readRadiusPx(fromCover, 16);
 
-    // Reveal main page + mini-player underneath so we can measure target miniCoverRect
-    // AND start main page rising smoothly back to scale(1)
+    // 2. Reveal main page + mini-player underneath (#mini-player is outside #content-pane -> exact resting rect!)
     _resetMainDepth();
     document.body.classList.remove('np-fullscreen');
     document.body.classList.add('player-collapsed');
@@ -1164,23 +1195,23 @@
     var mini = document.getElementById('mini-player');
     var miniCover = mini ? mini.querySelector('.mini-player-cover') : null;
     var miniRect = mini ? mini.getBoundingClientRect() : null;
+    var miniCoverRect = miniCover ? miniCover.getBoundingClientRect() : null;
+    var miniCoverRadius = _readRadiusPx(miniCover, 12);
 
-    if (fromCoverRect && miniCover) {
+    if (fromCoverRect && miniCover && miniCoverRect && miniCoverRect.width >= 4 && miniCoverRect.height >= 4) {
       if (fromCover) fromCover.style.visibility = 'hidden';
-      _morphCover(fromCoverRect, fromCoverRadius, miniCover, fromCover, 370, _AM_SHEET_EASE);
+      _morphCover(fromCoverRect, fromCoverRadius, miniCover, fromCover, 360, _AM_SHEET_EASE, miniCoverRect, miniCoverRadius);
     }
 
-    var startTransform = pane.style.transform || 'translate3d(0, 0, 0)';
-    var startRadius = pane.style.borderRadius || '0px';
-    var endY = miniRect ? Math.max(window.innerHeight * 0.72, miniRect.top) : window.innerHeight;
+    var endY = miniRect && miniRect.height > 0 ? Math.max(window.innerHeight * 0.72, miniRect.top) : window.innerHeight;
     pane.classList.add('mobile-sheet-closing');
     pane.style.transition = 'none';
 
     var sheetAnim = pane.animate([
-      { transform: startTransform, borderRadius: startRadius, opacity: 1 },
+      { transform: 'translate3d(0, 0, 0)', borderRadius: '0px', opacity: 1 },
       { transform: 'translate3d(0, ' + endY.toFixed(0) + 'px, 0)', borderRadius: '24px', opacity: 0 }
     ], {
-      duration: 330,
+      duration: 310,
       easing: _AM_SHEET_EASE,
       fill: 'forwards'
     });
@@ -1197,7 +1228,7 @@
       _finishClosePhoneNowPlaying();
     }
     sheetAnim.onfinish = onEnd;
-    _npSheetCloseTimer = setTimeout(onEnd, 370);
+    _npSheetCloseTimer = setTimeout(onEnd, 350);
   }
 
   function _setupPhonePlaybackBehavior() {
@@ -1635,101 +1666,6 @@
       document.addEventListener('touchend', function () { _finishEdgeSwipe(false); }, { passive: true });
       document.addEventListener('touchcancel', function () { _finishEdgeSwipe(true); }, { passive: true });
     }
-
-    // Interactive 1:1 swipe-down to dismiss Fullscreen Now Playing sheet (both iOS & Android)
-    var npDragActive = false;
-    var npDragLocked = false;
-    var npDragStartX = 0;
-    var npDragStartY = 0;
-    var npDragStartTime = 0;
-    var npDragLastDy = 0;
-
-    document.addEventListener('touchstart', function (e) {
-      if (!_isPhone() || e.touches.length !== 1) return;
-      if (!document.body.classList.contains('np-fullscreen')) return;
-      var pane = document.getElementById('now-playing-pane');
-      if (!pane || !pane.contains(e.target)) return;
-      if (e.target.closest('.np-progress-bar, .np-lyrics, .np-queue-list, button, input, [role="slider"]')) return;
-      var t = e.touches[0];
-      npDragActive = true;
-      npDragLocked = false;
-      npDragStartX = t.clientX;
-      npDragStartY = t.clientY;
-      npDragStartTime = Date.now();
-      npDragLastDy = 0;
-    }, { passive: true });
-
-    document.addEventListener('touchmove', function (e) {
-      if (!npDragActive || e.touches.length !== 1) return;
-      var pane = document.getElementById('now-playing-pane');
-      if (!pane) return;
-      var t = e.touches[0];
-      var dy = t.clientY - npDragStartY;
-      var dx = Math.abs(t.clientX - npDragStartX);
-
-      if (!npDragLocked) {
-        if (dx > 14 && dx > dy) {
-          npDragActive = false;
-          return;
-        }
-        if (dy > 12 && dy > dx * 1.2) {
-          npDragLocked = true;
-          pane.style.transition = 'none';
-        } else {
-          return;
-        }
-      }
-
-      if (e.cancelable) e.preventDefault();
-      var clamped = Math.max(0, dy);
-      npDragLastDy = clamped;
-      pane.style.transform = 'translate3d(0, ' + clamped + 'px, 0)';
-      pane.style.borderRadius = Math.min(28, Math.round(clamped * 0.16)) + 'px';
-
-      // Apple Music live depth: smoothly bring recessed #app-main forward as user drags sheet down
-      var main = document.getElementById('app-main');
-      if (main) {
-        var progress = Math.min(1, clamped / Math.max(260, window.innerHeight * 0.55));
-        var sc = 0.925 + 0.075 * progress;
-        var br = Math.round(24 * (1 - progress));
-        var bright = 0.76 + 0.24 * progress;
-        main.style.transition = 'none';
-        main.style.transform = 'scale(' + sc.toFixed(4) + ')';
-        main.style.borderRadius = br + 'px';
-        main.style.filter = 'brightness(' + bright.toFixed(3) + ')';
-      }
-    }, { passive: false });
-
-    function _finishNpSwipe(cancelled) {
-      if (!npDragActive) return;
-      var wasLocked = npDragLocked;
-      var dy = npDragLastDy;
-      var dt = Math.max(1, Date.now() - npDragStartTime);
-      var vy = dy / dt;
-      npDragActive = false;
-      npDragLocked = false;
-      npDragLastDy = 0;
-      if (!wasLocked) return;
-
-      var pane = document.getElementById('now-playing-pane');
-      if (!pane) return;
-      var shouldDismiss = !cancelled && (dy > 110 || vy > 0.55);
-      if (shouldDismiss) {
-        // Trigger full Apple Music close morph FROM the current dragged cover position right into Mini Player!
-        _closePhoneNowPlaying(false);
-      } else {
-        _resetMainDepth();
-        pane.style.transition = 'transform 260ms cubic-bezier(0.28, 0.88, 0.24, 1), border-radius 260ms ease';
-        pane.style.transform = 'translate3d(0, 0, 0)';
-        pane.style.borderRadius = '';
-        setTimeout(function () {
-          _clearInlineMotion(pane);
-        }, 270);
-      }
-    }
-
-    document.addEventListener('touchend', function () { _finishNpSwipe(false); }, { passive: true });
-    document.addEventListener('touchcancel', function () { _finishNpSwipe(true); }, { passive: true });
   }
 
   // Android real-time Material 3 Predictive Back gesture callbacks (from Kotlin OnBackPressedCallback)
