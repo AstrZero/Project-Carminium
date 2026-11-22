@@ -6,7 +6,8 @@
 
 /* Hide iOS-only elements on Desktop/Electron */
 .nav-item-ios-only,
-.np-ios-queue-btn {
+.np-ios-queue-btn,
+.ios-subpage-title {
   display: none !important;
 }
 
@@ -17,18 +18,24 @@ html[data-platform="ios"] {
   --ios-safe-left: env(safe-area-inset-left, 0px);
   --ios-safe-right: env(safe-area-inset-right, 0px);
   overscroll-behavior: none;
+  touch-action: pan-x pan-y;
+  -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
 }
 
 html[data-platform="ios"] body {
   overscroll-behavior: none;
+  touch-action: pan-x pan-y;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
 }
 
+/* Prevent iOS WKWebView auto-zoom when focusing inputs with font-size < 16px */
 html[data-platform="ios"] input,
-html[data-platform="ios"] textarea {
+html[data-platform="ios"] textarea,
+html[data-platform="ios"] select {
+  font-size: 16px !important;
   -webkit-user-select: text;
   user-select: text;
 }
@@ -44,7 +51,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   display: none !important;
 }
 
-/* iPad (>= 768px): keep original desktop 3-mode layout intact, only respect top Safe Area */
+/* iPad (>= 768px): keep original desktop 3-mode layout intact, only respect Safe Area */
 @media (min-width: 768px) {
   html[data-platform="ios"] .app-root {
     grid-template-rows: calc(36px + var(--ios-safe-top)) 1fr;
@@ -64,6 +71,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   html[data-platform="ios"] {
     --ios-bottom-nav-h: 64px;
     --ios-mini-h: 60px;
+    --ios-subbar-h: 48px;
   }
 
   /* 1. Root Shell: single-column content + fixed bottom nav bar */
@@ -95,21 +103,29 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     height: 100%;
   }
 
-  /* 2. Remove desktop title bar chrome; keep only floating Back button on subpages */
+  /* 2. Top Back Bar: hidden on 1st-level pages & Now Playing; shown ONLY on 2nd-level pages
+        with dedicated top space so it NEVER overlaps page titles! */
   html[data-platform="ios"] .title-bar {
+    display: none !important;
+  }
+  html[data-platform="ios"] body.ios-subpage:not(.np-fullscreen) .title-bar {
+    display: flex !important;
     position: fixed !important;
     top: 0;
     left: 0;
     right: 0;
-    height: calc(44px + var(--ios-safe-top));
+    height: calc(var(--ios-subbar-h) + var(--ios-safe-top));
     padding: var(--ios-safe-top) 12px 0;
-    background: transparent !important;
-    border: none !important;
-    pointer-events: none;
+    background: color-mix(in srgb, var(--md-surface) 88%, transparent) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(1.3);
+    backdrop-filter: blur(18px) saturate(1.3);
+    border-bottom: 1px solid color-mix(in srgb, var(--md-outline-variant) 32%, transparent) !important;
+    pointer-events: auto;
     z-index: 900;
-    display: flex;
     align-items: center;
     justify-content: flex-start;
+    gap: 8px;
+    box-sizing: border-box;
   }
   html[data-platform="ios"] .title-bar-logo,
   html[data-platform="ios"] .title-bar-title-wrap,
@@ -120,22 +136,36 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   html[data-platform="ios"] .title-bar-left {
     display: flex !important;
     align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1 1 auto;
     pointer-events: auto;
   }
   html[data-platform="ios"] .title-bar-back {
     width: 38px;
     height: 38px;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--md-surface-container-high) 82%, transparent);
-    -webkit-backdrop-filter: blur(14px);
-    backdrop-filter: blur(14px);
-    box-shadow: var(--md-sys-elevation-level1);
+    background: var(--md-surface-container-high);
+    color: var(--md-on-surface);
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    opacity: 1 !important;
+    pointer-events: auto !important;
   }
-  html[data-platform="ios"] body.np-fullscreen .title-bar {
-    display: none !important;
+  html[data-platform="ios"] body.ios-subpage:not(.np-fullscreen) .ios-subpage-title {
+    display: block !important;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--md-on-surface);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
   }
 
-  /* 3. Content pane: full width + safe top + space for Mini Player & bottom nav */
+  /* 3. Content pane: full width + safe top + extra top bar space when on a 2nd-level page */
   html[data-platform="ios"] .content-pane,
   html[data-platform="ios"] body.player-collapsed .content-pane,
   html[data-platform="ios"] body.settings-active .content-pane {
@@ -148,6 +178,9 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     padding-bottom: calc(var(--ios-bottom-nav-h) + var(--ios-mini-h) + 20px + var(--ios-safe-bottom)) !important;
     box-sizing: border-box;
     -webkit-overflow-scrolling: touch;
+  }
+  html[data-platform="ios"] body.ios-subpage:not(.np-fullscreen) .content-pane {
+    padding-top: calc(var(--ios-safe-top) + var(--ios-subbar-h)) !important;
   }
 
   /* 4. Bottom Navigation Bar (moved from left .nav-drawer) */
@@ -268,12 +301,81 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     bottom: calc(var(--ios-bottom-nav-h) + var(--ios-mini-h) + 18px + var(--ios-safe-bottom)) !important;
   }
 
-  /* 6. Now Playing Sheet on iPhone:
+  /* 6. Page Headers on iPhone (Music page single-line title + icon-only sort button) */
+  html[data-platform="ios"] .page-header {
+    padding: 16px 16px 10px !important;
+    gap: 10px !important;
+    align-items: center !important;
+    flex-wrap: nowrap !important;
+  }
+  html[data-platform="ios"] .page-header-left {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  html[data-platform="ios"] .page-title {
+    font-size: 24px !important;
+    line-height: 1.25 !important;
+    white-space: nowrap !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  html[data-platform="ios"] .page-subtitle {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  html[data-platform="ios"] .page-header-right,
+  html[data-platform="ios"] .page-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  html[data-platform="ios"] .page-header .btn-filled,
+  html[data-platform="ios"] #btn-play-all,
+  html[data-platform="ios"] #btn-add-library {
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+    height: 38px !important;
+    padding: 0 14px !important;
+    gap: 6px !important;
+  }
+
+  /* Compact icon-only sort button on iPhone; clicking still opens full sort menu */
+  html[data-platform="ios"] #sort-select {
+    position: relative;
+    flex-shrink: 0;
+  }
+  html[data-platform="ios"] #sort-select .md-select-trigger {
+    width: 38px !important;
+    min-width: 38px !important;
+    height: 38px !important;
+    padding: 0 !important;
+    border-radius: 999px !important;
+    justify-content: center !important;
+    gap: 0 !important;
+  }
+  html[data-platform="ios"] #sort-select .md-select-label,
+  html[data-platform="ios"] #sort-select .md-select-arrow {
+    display: none !important;
+  }
+  html[data-platform="ios"] #sort-select .md-select-menu {
+    right: 0 !important;
+    left: auto !important;
+    min-width: 176px !important;
+  }
+
+  html[data-platform="ios"] .search-bar {
+    margin-inline: 16px !important;
+  }
+
+  /* 7. Now Playing Sheet on iPhone:
         - Sidebar state removed (hidden unless .fullscreen)
         - #np-split-btn (Full window / Theater) removed
         - Top #np-content-switch preserved, ONLY middle [data-mode="duo"] removed
-        - Lyrics mode shows #np-mini-info at top (cover + 2-line title & artist·album)
-        - All other components remain 100% original Carminium design! */
+        - Apple Music mutual-exclusion logic between lyrics and queue
+        - Secondary controls strictly match main controls width
+        - Lyrics/Queue top #np-mini-info has NO pill/rounded-rect background */
   html[data-platform="ios"] .now-playing-pane:not(.fullscreen) {
     display: none !important;
   }
@@ -317,6 +419,13 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
   html[data-platform="ios"] .now-playing-pane.np-content-lyrics .np-content-thumb {
     left: 44px !important;
   }
+  /* When Queue is active (Apple Music mutual exclusion), hide switch active thumb */
+  html[data-platform="ios"] .now-playing-pane.ios-queue-open .np-content-thumb {
+    opacity: 0 !important;
+  }
+  html[data-platform="ios"] .now-playing-pane.ios-queue-open .np-content-seg.active {
+    color: var(--md-on-surface-variant) !important;
+  }
 
   /* Mode 1: solo (no lyrics) — original cover + 3-line info + progress + controls */
   html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo {
@@ -351,14 +460,24 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     max-width: 100%;
     max-height: 100%;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo .np-main-controls,
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-solo .np-secondary-controls {
-    width: 100%;
-    max-width: 380px;
-    margin-inline: auto;
+
+  /* Match exact width & horizontal alignment between main controls and secondary controls */
+  html[data-platform="ios"] .now-playing-pane.fullscreen .np-main-controls,
+  html[data-platform="ios"] .now-playing-pane.fullscreen .np-secondary-controls {
+    width: 100% !important;
+    max-width: 360px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    box-sizing: border-box !important;
+  }
+  html[data-platform="ios"] .now-playing-pane.fullscreen .np-secondary-controls {
+    margin-top: 0 !important;
+    margin-bottom: 6px !important;
   }
 
-  /* Mode 2: lyrics only — show #np-mini-info at top (cover + 2 lines: title / artist · album) */
+  /* Mode 2: lyrics only — #np-mini-info at top WITHOUT rounded-rect background */
   html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics {
     grid-template-columns: 1fr !important;
     grid-template-rows: auto auto 1fr auto !important;
@@ -368,29 +487,37 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
       "lyrics"
       "main" !important;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-info {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-info,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-mini-info {
     display: flex !important;
     grid-area: mini;
     align-items: center;
     gap: 12px;
-    padding: 4px 2px 6px;
+    margin: 0 !important;
+    padding: 4px 2px 6px !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
     min-width: 0;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-cover {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-cover,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-mini-cover {
     width: 48px;
     height: 48px;
-    border-radius: 10px;
+    border-radius: 10px !important;
     flex-shrink: 0;
     overflow: hidden;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-text {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-text,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-mini-text {
     flex: 1 1 auto;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-title {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-title,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-mini-title {
     font-size: 16px;
     font-weight: 600;
     line-height: 1.25;
@@ -399,7 +526,8 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-artist {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-mini-artist,
+  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-mini-artist {
     font-size: 13px;
     line-height: 1.3;
     margin: 0;
@@ -414,16 +542,24 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     padding-top: 0 !important;
     min-height: 0;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-lyrics {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-lyrics:not(:has(.np-lyrics-placeholder)) {
     padding: 20% 8px 34% !important;
   }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-main-controls {
+  html[data-platform="ios"] .now-playing-pane.fullscreen.np-content-lyrics .np-lyrics:has(.np-lyrics-placeholder) {
     width: 100%;
-    max-width: 360px;
-    margin-inline: auto;
+    height: 100%;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 16px 44px !important;
+  }
+  /* Always keep lyrics toolbar visible on touch devices (no hover state) */
+  html[data-platform="ios"] .now-playing-pane.fullscreen .np-lyrics-toolbar {
+    opacity: 1 !important;
+    pointer-events: auto !important;
   }
 
-  /* Queue Overlay Mode when tapping topbar #btn-ios-queue */
+  /* Queue View Mode when tapping topbar #btn-ios-queue (Apple Music mutual exclusion) */
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open {
     grid-template-columns: 1fr !important;
     grid-template-rows: auto auto 1fr auto !important;
@@ -432,13 +568,6 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
       "mini"
       "queue"
       "main" !important;
-  }
-  html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-mini-info {
-    display: flex !important;
-    grid-area: mini;
-    align-items: center;
-    gap: 12px;
-    padding: 4px 2px 6px;
   }
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-panel--info,
   html[data-platform="ios"] .now-playing-pane.fullscreen.ios-queue-open .np-panel--lyrics,
@@ -456,7 +585,8 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     color: var(--md-on-secondary-container);
   }
 
-  /* 7. Settings Page: convert desktop 2-column grid -> top pill tabs + single column */
+  /* 8. Settings Page on iPhone: 2-level navigation (Category List -> Detail Page)
+        + 2-line layout for rows with wide controls (buttons/selects/inputs/sliders) */
   html[data-platform="ios"] .settings-page {
     position: relative !important;
     display: flex !important;
@@ -465,43 +595,119 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     min-height: 100%;
     overflow: visible !important;
   }
-  html[data-platform="ios"] .settings-nav {
+
+  /* Level 1: Category List */
+  html[data-platform="ios"] body:not(.ios-settings-detail) .settings-nav {
+    display: flex !important;
+    flex-direction: column !important;
     width: 100% !important;
-    padding: 8px 12px 6px !important;
+    padding: 12px 16px 24px !important;
     border-right: none !important;
+    background: transparent !important;
     overflow: visible !important;
-    flex-shrink: 0;
+  }
+  html[data-platform="ios"] body:not(.ios-settings-detail) .settings-content {
+    display: none !important;
   }
   html[data-platform="ios"] .settings-nav-header {
-    padding: 4px 4px 8px !important;
+    padding: 6px 4px 14px !important;
+  }
+  html[data-platform="ios"] .settings-nav-header-title {
+    font-size: 28px !important;
+    font-weight: 700 !important;
   }
   html[data-platform="ios"] .settings-nav-list {
     display: flex !important;
-    flex-direction: row !important;
-    gap: 6px !important;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    padding-bottom: 4px;
-  }
-  html[data-platform="ios"] .settings-nav-list::-webkit-scrollbar {
-    display: none;
+    flex-direction: column !important;
+    gap: 2px !important;
+    width: 100%;
   }
   html[data-platform="ios"] .settings-nav-item {
-    flex: 0 0 auto !important;
-    width: auto !important;
-    min-height: 36px !important;
-    padding: 6px 14px !important;
-    border-radius: 999px !important;
-    white-space: nowrap;
+    width: 100% !important;
+    min-height: 56px !important;
+    padding: 12px 16px !important;
+    border-radius: 6px !important;
+    background: var(--md-surface-container) !important;
+    color: var(--md-on-surface) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 14px !important;
   }
-  html[data-platform="ios"] .settings-content {
+  html[data-platform="ios"] .settings-nav-item:first-child {
+    border-top-left-radius: 20px !important;
+    border-top-right-radius: 20px !important;
+  }
+  html[data-platform="ios"] .settings-nav-item:last-child {
+    border-bottom-left-radius: 20px !important;
+    border-bottom-right-radius: 20px !important;
+  }
+  html[data-platform="ios"] .settings-nav-item:active {
+    background: var(--md-surface-container-high) !important;
+  }
+  html[data-platform="ios"] .settings-nav-item .settings-nav-label {
     flex: 1 1 auto;
-    padding: 8px 12px 24px !important;
+    text-align: left;
+    font-size: 16px !important;
+    font-weight: 500 !important;
+  }
+  html[data-platform="ios"] .settings-nav-item .ios-settings-chevron {
+    font-size: 20px;
+    color: var(--md-on-surface-variant);
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  /* Level 2: Category Detail */
+  html[data-platform="ios"] body.ios-settings-detail .settings-nav {
+    display: none !important;
+  }
+  html[data-platform="ios"] body.ios-settings-detail .settings-content {
+    display: block !important;
+    flex: 1 1 auto;
+    padding: 8px 14px 28px !important;
     overflow: visible !important;
   }
 
-  /* 8. iPhone More Popup (.mdx style) & Dedicated More Page */
+  /* Stack wide settings controls onto 2 clean rows on iPhone (keep .toggle switches 1-row) */
+  html[data-platform="ios"] .settings-row {
+    gap: 10px 12px !important;
+  }
+  html[data-platform="ios"] .settings-row:not(:has(.toggle)) {
+    flex-wrap: wrap !important;
+    align-items: center !important;
+  }
+  html[data-platform="ios"] .settings-row:not(:has(.toggle)) .settings-row-body {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+  }
+  html[data-platform="ios"] .settings-row:not(:has(.toggle)) .settings-row-trailing {
+    flex: 1 0 100% !important;
+    width: 100% !important;
+    margin-left: 0 !important;
+    padding-top: 2px;
+    display: flex !important;
+    justify-content: flex-start !important;
+  }
+  html[data-platform="ios"] .settings-row .md-dropdown,
+  html[data-platform="ios"] .settings-row .md-dropdown-trigger,
+  html[data-platform="ios"] .settings-row .settings-font-input,
+  html[data-platform="ios"] .settings-row .md-slider-wrap {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  html[data-platform="ios"] .settings-row .md-dropdown-trigger {
+    justify-content: space-between !important;
+  }
+  html[data-platform="ios"] .settings-row .md-dropdown-menu {
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  /* 9. iPhone More Popup (.mdx style) & Dedicated More Page */
   html[data-platform="ios"] .ios-more-popup {
     position: fixed;
     right: 12px;
@@ -557,7 +763,7 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     color: var(--md-primary);
   }
 
-  /* 9. Responsive grids, track actions & mobile modals */
+  /* 10. Responsive grids, track actions & mobile modals */
   html[data-platform="ios"] .track-action-btn,
   html[data-platform="ios"] .track-row .track-more-btn {
     opacity: 1 !important;

@@ -129,8 +129,9 @@
               {
                 type: 'action',
                 bind: '_ios_import_files',
-                label: '导入本地音频文件',
-                sub: '从「文件」App 选择音频或文件夹，也可直接把歌曲放到「我的 iPhone → Project Carminium」',
+                icon: 'folder_open',
+                label: '导入独立音乐库',
+                sub: '从「文件」App 选择音频或文件夹导入到应用私有目录；也可直接把歌曲放到「我的 iPhone → Project Carminium」自动扫描',
                 buttonText: '选择音频',
                 buttonIcon: 'upload_file',
                 onAction: function () {
@@ -152,7 +153,7 @@
               {
                 type: 'action',
                 bind: 'ios_nav_items',
-                icon: 'bottom_navigation',
+                icon: 'dock_to_bottom',
                 label: '自定义底部导航栏入口',
                 sub: '挑选最多 4 个常用页面放到底部，其余自动收进「更多」',
                 buttonText: '自定义',
@@ -461,7 +462,183 @@
     }
   }
 
+  // ── 2b. 2nd-Level Subpage Back Bar & 2-Level Settings (iPhone) ───────
+
+  var _subpageTitleText = '';
+
+  function _ensureSubpageTitleEl() {
+    var left = document.querySelector('.title-bar-left');
+    if (!left) return null;
+    var el = document.getElementById('ios-subpage-title');
+    if (!el) {
+      el = document.createElement('span');
+      el.id = 'ios-subpage-title';
+      el.className = 'ios-subpage-title';
+      left.appendChild(el);
+    }
+    return el;
+  }
+
+  function _setSubpageTitle(text) {
+    _subpageTitleText = text || '';
+    var el = _ensureSubpageTitleEl();
+    if (el) el.textContent = _subpageTitleText;
+  }
+
+  function _detectSubpage() {
+    if (!_isPhone()) return false;
+    if (document.body.classList.contains('np-fullscreen')) return false;
+    if (document.body.classList.contains('ios-settings-detail')) return true;
+
+    var curPage = (window.App && App.state && App.state.currentPage) || '';
+    var curParams = (window.App && App.state && App.state.currentPageParams) || null;
+    if (curPage === 'search' || curPage === 'about') return true;
+    if (curPage === 'playlists' && curParams && curParams.playlist_id) return true;
+    if (curPage === 'your_mix' && curParams && curParams.mix_detail) return true;
+
+    var container = document.getElementById('page-container');
+    if (!container) return false;
+    if (container.querySelector('.detail-header, .artist-detail-body, .ym-mix-detail-page, .search-page, .playlist-header')) {
+      return true;
+    }
+    return false;
+  }
+
+  function _syncSubpageState() {
+    var isSub = _detectSubpage();
+    document.body.classList.toggle('ios-subpage', isSub);
+
+    var backBtn = document.getElementById('title-bar-back');
+    if (backBtn && isSub) {
+      backBtn.disabled = false;
+      backBtn.style.opacity = '1';
+      backBtn.style.pointerEvents = 'auto';
+    }
+
+    if (!document.body.classList.contains('ios-settings-detail')) {
+      var titleEl = _ensureSubpageTitleEl();
+      if (titleEl) {
+        if (!isSub) {
+          titleEl.textContent = '';
+        } else {
+          var curPage = (window.App && App.state && App.state.currentPage) || '';
+          if (curPage === 'search') {
+            titleEl.textContent = _t('common.search', '搜索');
+          } else {
+            var h = document.querySelector('#page-container .detail-name, #page-container .ym-mix-detail-title, #page-container .playlist-title');
+            titleEl.textContent = h ? (h.textContent || '').trim() : '';
+          }
+        }
+      }
+    }
+  }
+
+  function _enhanceSettingsTwoLevel() {
+    var nav = document.getElementById('settings-nav');
+    if (!nav || nav.dataset.iosTwoLevelBound === '1') return;
+    nav.dataset.iosTwoLevelBound = '1';
+
+    // Always start at Level 1 (Category List) when entering Settings on iPhone
+    document.body.classList.remove('ios-settings-detail');
+    _setSubpageTitle('');
+
+    nav.querySelectorAll('.settings-nav-item').forEach(function (item) {
+      if (!item.querySelector('.ios-settings-chevron')) {
+        var chev = document.createElement('span');
+        chev.className = 'material-symbols-rounded ios-settings-chevron';
+        chev.textContent = 'chevron_right';
+        item.appendChild(chev);
+      }
+      item.addEventListener('click', function () {
+        if (!_isPhone()) return;
+        var labelEl = this.querySelector('.settings-nav-label');
+        _setSubpageTitle(labelEl ? (labelEl.textContent || '').trim() : '');
+        document.body.classList.add('ios-settings-detail');
+        var pane = document.getElementById('content-pane');
+        if (pane) pane.scrollTop = 0;
+        _syncSubpageState();
+      });
+    });
+
+    _syncSubpageState();
+  }
+
+  function _exitSettingsDetail() {
+    if (!document.body.classList.contains('ios-settings-detail')) return false;
+    document.body.classList.remove('ios-settings-detail');
+    _setSubpageTitle('');
+    var pane = document.getElementById('content-pane');
+    if (pane) pane.scrollTop = 0;
+    _syncSubpageState();
+    return true;
+  }
+
+  function _setupSubpageObserver() {
+    _ensureSubpageTitleEl();
+
+    // Intercept Back button on iPhone:
+    // 1. Settings Level-2 -> Settings Level-1 list
+    // 2. In-place detail views (album / artist / mix detail) -> back to their parent list
+    var backBtn = document.getElementById('title-bar-back');
+    if (backBtn) {
+      backBtn.addEventListener('click', function (e) {
+        if (!_isPhone()) return;
+        if (_exitSettingsDetail()) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+        var curPage = (window.App && App.state && App.state.currentPage) || '';
+        var c = document.getElementById('page-container');
+        if (c && curPage === 'albums' && c.querySelector('.detail-header')) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          App.navigate('albums');
+          return;
+        }
+        if (c && curPage === 'artists' && c.querySelector('.artist-detail-body')) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          App.navigate('artists');
+          return;
+        }
+        if (c && curPage === 'your_mix' && c.querySelector('.ym-mix-detail-page')) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          App.navigate('your_mix');
+          return;
+        }
+      }, true);
+    }
+
+    var container = document.getElementById('page-container');
+    if (container && window.MutationObserver) {
+      var mo = new MutationObserver(function () {
+        if (!document.getElementById('settings-nav')) {
+          document.body.classList.remove('ios-settings-detail');
+        } else {
+          _enhanceSettingsTwoLevel();
+        }
+        _syncSubpageState();
+      });
+      mo.observe(container, { childList: true, subtree: false });
+    }
+  }
+
   // ── 3. iPhone Playback Sheet: Mini Player <-> Fullscreen (No Sidebar) ─
+
+  function _setPhoneNpMode(mode) {
+    var pane = document.getElementById('now-playing-pane');
+    if (!pane) return;
+    pane.classList.remove('ios-queue-open');
+    var targetSeg = pane.querySelector('.np-content-seg[data-mode="' + mode + '"]');
+    if (targetSeg) {
+      targetSeg.click();
+    } else {
+      pane.classList.remove('np-content-solo', 'np-content-duo', 'np-content-lyrics');
+      pane.classList.add('np-content-' + mode);
+    }
+  }
 
   function _openPhoneNowPlaying() {
     var pane = document.getElementById('now-playing-pane');
@@ -470,17 +647,12 @@
     pane.classList.add('fullscreen');
     document.body.classList.remove('player-collapsed');
     document.body.classList.add('np-fullscreen');
+    _syncSubpageState();
 
     // Enforce 2-mode (solo or lyrics) on iPhone: if currently in duo, switch to solo
     if (pane.classList.contains('np-content-duo') ||
         (!pane.classList.contains('np-content-solo') && !pane.classList.contains('np-content-lyrics'))) {
-      var soloSeg = pane.querySelector('.np-content-seg[data-mode="solo"]');
-      if (soloSeg) {
-        soloSeg.click();
-      } else {
-        pane.classList.remove('np-content-duo', 'np-content-lyrics');
-        pane.classList.add('np-content-solo');
-      }
+      _setPhoneNpMode('solo');
     }
   }
 
@@ -491,6 +663,7 @@
     pane.classList.add('collapsed');
     document.body.classList.remove('np-fullscreen');
     document.body.classList.add('player-collapsed');
+    _syncSubpageState();
   }
 
   function _setupPhonePlaybackBehavior() {
@@ -520,7 +693,8 @@
       }, true);
     }
 
-    // Top-right queue button on iPhone toggles in-place queue overlay
+    // Top-right queue button on iPhone: Apple Music mutual-exclusion logic with lyrics
+    // (closed -> open queue & deactivate lyrics; open -> close queue & return to solo cover)
     var queueBtn = document.getElementById('btn-ios-queue');
     if (queueBtn) {
       queueBtn.addEventListener('click', function (e) {
@@ -528,11 +702,15 @@
         e.preventDefault();
         var pane = document.getElementById('now-playing-pane');
         if (!pane) return;
-        pane.classList.toggle('ios-queue-open');
+        if (pane.classList.contains('ios-queue-open')) {
+          _setPhoneNpMode('solo');
+        } else {
+          pane.classList.add('ios-queue-open');
+        }
       });
     }
 
-    // Switching solo/lyrics closes queue overlay automatically
+    // Clicking solo or lyrics segment while in Queue closes Queue and switches cleanly
     document.querySelectorAll('.np-content-seg').forEach(function (seg) {
       seg.addEventListener('click', function () {
         var pane = document.getElementById('now-playing-pane');
@@ -544,17 +722,19 @@
     var navSettings = document.getElementById('nav-settings');
     if (navSettings) {
       navSettings.addEventListener('click', function () {
+        document.body.classList.remove('ios-settings-detail');
         _navigateToNavItem('settings');
       });
     }
 
-    // Any non-More bottom nav click closes More popup & clears More highlight
+    // Any non-More bottom nav click closes More popup, exits Settings detail & clears More highlight
     var navDrawer = document.getElementById('nav-drawer');
     if (navDrawer) {
       navDrawer.addEventListener('click', function (e) {
         var btn = e.target.closest('.nav-item');
         if (!btn || btn.id === 'nav-more') return;
         _closeMorePopup();
+        document.body.classList.remove('ios-settings-detail');
         var moreEl = document.getElementById('nav-more');
         if (moreEl) moreEl.classList.remove('active');
       });
@@ -577,9 +757,22 @@
     }
   }
 
-  // ── 4. Touch Ergonomics: Long-press Context Menu & Left-edge Swipe Back ─
+  // ── 4. Touch Ergonomics: No Zoom, Long-press Context Menu & Left-edge Swipe Back ─
 
   function _setupTouchGestures() {
+    // Strictly prevent pinch-to-zoom & double-tap zoom gestures on iOS WKWebView
+    ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (evName) {
+      document.addEventListener(evName, function (e) {
+        e.preventDefault();
+      }, { passive: false });
+    });
+
+    document.addEventListener('touchmove', function (e) {
+      if (e.touches && e.touches.length > 1) {
+        e.preventDefault();
+      }
+    }, { passive: false });
+
     // Long-press (500ms) -> synthetic contextmenu for track/album/artist rows
     var lpTimer = null;
     var lpStartX = 0;
@@ -623,7 +816,7 @@
       }, { passive: true });
     });
 
-    // Left-edge swipe right -> Back button on subpages
+    // Left-edge swipe right -> Back button on subpages / Settings Level-2 / Now Playing
     var edgeActive = false;
     var edgeStartX = 0;
     var edgeStartY = 0;
@@ -650,11 +843,9 @@
       if (dx > 70 && dy < 60) {
         if (document.body.classList.contains('np-fullscreen')) {
           _closePhoneNowPlaying();
-        } else {
+        } else if (!_exitSettingsDetail() && document.body.classList.contains('ios-subpage')) {
           var backBtn = document.getElementById('title-bar-back');
-          if (backBtn && backBtn.offsetParent !== null) {
-            backBtn.click();
-          }
+          if (backBtn) backBtn.click();
         }
       }
     }, { passive: true });
@@ -679,10 +870,15 @@
   }
 
   function _init() {
+    _setupSubpageObserver();
     _setupPhonePlaybackBehavior();
     _setupTouchGestures();
     _applyBottomNavLayout();
-    window.addEventListener('resize', _applyBottomNavLayout);
+    _syncSubpageState();
+    window.addEventListener('resize', function () {
+      _applyBottomNavLayout();
+      _syncSubpageState();
+    });
 
     if (window.__bridge && window.__bridge.on) {
       window.__bridge.on('settings_changed', function (raw) {
