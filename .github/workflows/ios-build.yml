@@ -44,7 +44,7 @@ concurrency:
 jobs:
   build-ios-unsigned:
     name: Build Unsigned iOS IPA (arm64)
-    runs-on: macos-15
+    runs-on: macos-26
     env:
       RUST_BACKTRACE: '1'
       CARGO_TERM_COLOR: always
@@ -146,7 +146,8 @@ jobs:
             echo "Found existing src-tauri/gen/apple Xcode project; skipping tauri ios init."
           fi
 
-      - name: Generate iOS App Icons from mobile padded icon
+      - name: Generate iOS Adaptive App Icons (iOS 26 Liquid Glass + iOS 18 Light/Dark/Tinted)
+        id: ios_icons
         shell: bash
         run: |
           set -euo pipefail
@@ -160,6 +161,82 @@ jobs:
             fi
           fi
 
+          # Upgrade Assets.xcassets/AppIcon.appiconset to iOS 18+ Light / Dark / Tinted universal set
+          APPICONSET="src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset"
+          if [ -d "$APPICONSET" ] && [ -f "src-tauri/icons/icon-mobile-ios.png" ] && [ -f "src-tauri/icons/icon-mobile-ios-dark.png" ] && [ -f "src-tauri/icons/icon-mobile-ios-tinted.png" ]; then
+            rm -rf "$APPICONSET"
+            mkdir -p "$APPICONSET"
+            cp "src-tauri/icons/icon-mobile-ios.png" "$APPICONSET/AppIcon-Light.png"
+            cp "src-tauri/icons/icon-mobile-ios-dark.png" "$APPICONSET/AppIcon-Dark.png"
+            cp "src-tauri/icons/icon-mobile-ios-tinted.png" "$APPICONSET/AppIcon-Tinted.png"
+            cat > "$APPICONSET/Contents.json" <<'JSONEOF'
+          {
+            "images": [
+              {
+                "filename": "AppIcon-Light.png",
+                "idiom": "universal",
+                "platform": "ios",
+                "size": "1024x1024"
+              },
+              {
+                "appearances": [
+                  {
+                    "appearance": "luminosity",
+                    "value": "dark"
+                  }
+                ],
+                "filename": "AppIcon-Dark.png",
+                "idiom": "universal",
+                "platform": "ios",
+                "size": "1024x1024"
+              },
+              {
+                "appearances": [
+                  {
+                    "appearance": "luminosity",
+                    "value": "tinted"
+                  }
+                ],
+                "filename": "AppIcon-Tinted.png",
+                "idiom": "universal",
+                "platform": "ios",
+                "size": "1024x1024"
+              }
+            ],
+            "info": {
+              "author": "xcode",
+              "version": 1
+            }
+          }
+          JSONEOF
+            echo "Prepared iOS 18 Light / Dark / Tinted AppIcon.appiconset."
+          fi
+
+          # Pre-flight test iOS 26 Liquid Glass Icon Composer bundle (AppIcon.icon)
+          USE_LIQUID_GLASS="false"
+          if [ -d "src-tauri/icons/AppIcon.icon" ]; then
+            rm -rf /tmp/carminium-icon-preflight
+            mkdir -p /tmp/carminium-icon-preflight
+            if xcrun actool \
+              --compile /tmp/carminium-icon-preflight \
+              --platform iphoneos \
+              --minimum-deployment-target 15.0 \
+              --target-device iphone \
+              --target-device ipad \
+              --app-icon AppIcon \
+              --output-partial-info-plist /tmp/carminium-icon-preflight/partial.plist \
+              src-tauri/icons/AppIcon.icon; then
+              if [ -f /tmp/carminium-icon-preflight/Assets.car ]; then
+                USE_LIQUID_GLASS="true"
+                echo "Pre-flight actool compiled AppIcon.icon (Liquid Glass) successfully!"
+                xcrun assetutil --info /tmp/carminium-icon-preflight/Assets.car | grep -E '"Name"|"AssetType"|"Appearance"' | head -n 40 || true
+              fi
+            else
+              echo "::warning::actool could not compile AppIcon.icon; falling back to iOS 18 Light/Dark/Tinted AppIcon.appiconset"
+            fi
+          fi
+          echo "use_liquid_glass=${USE_LIQUID_GLASS}" >> "$GITHUB_OUTPUT"
+
       - name: Configure unsigned Xcode project (project.yml + xcodegen)
         shell: bash
         run: |
@@ -171,12 +248,22 @@ jobs:
             exit 1
           fi
 
+          # Install AppIcon.icon (iOS 26 Liquid Glass) and remove duplicate AppIcon.appiconset when supported
+          USE_LIQUID_GLASS="${{ steps.ios_icons.outputs.use_liquid_glass }}"
+          if [ "$USE_LIQUID_GLASS" = "true" ] && [ -d "src-tauri/icons/AppIcon.icon" ]; then
+            rm -rf "$APPLE_DIR/AppIcon.icon"
+            cp -R "src-tauri/icons/AppIcon.icon" "$APPLE_DIR/AppIcon.icon"
+            rm -rf "$APPLE_DIR/Assets.xcassets/AppIcon.appiconset"
+            echo "Staged AppIcon.icon into $APPLE_DIR/AppIcon.icon (removed duplicate AppIcon.appiconset)."
+          fi
+
           # Disable code signing in the generated Xcode project so `tauri ios build`
           # archives the arm64 .app without requiring certificates or provisioning profiles.
-          python3 - "$PROJ_YML" <<'PYEOF'
+          python3 - "$PROJ_YML" "$USE_LIQUID_GLASS" <<'PYEOF'
           import re, sys
 
           path = sys.argv[1]
+          use_liquid_glass = sys.argv[2] == "true"
           text = open(path, "r", encoding="utf-8").read()
 
           # Remove any existing signing keys to avoid duplicate YAML keys
@@ -204,6 +291,25 @@ jobs:
               text = text.replace("        ENABLE_BITCODE: false\n", inject, 1)
           else:
               raise SystemExit("Could not locate ENABLE_BITCODE anchor in project.yml")
+
+          if use_liquid_glass:
+              if "ASSETCATALOG_COMPILER_APPICON_NAME" not in text:
+                  text = text.replace(
+                      '        DEVELOPMENT_TEAM: ""\n',
+                      '        DEVELOPMENT_TEAM: ""\n        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon\n',
+                      1,
+                  )
+              if "AppIcon.icon" not in text:
+                  # Insert AppIcon.icon right next to Assets.xcassets in target sources
+                  m = re.search(r"^([ \t]*)-[ \t]+path:[ \t]+Assets\.xcassets[^\n]*\n", text, flags=re.MULTILINE)
+                  if m:
+                      indent = m.group(1)
+                      text = text[:m.end()] + f"{indent}- path: AppIcon.icon\n" + text[m.end():]
+                  else:
+                      m2 = re.search(r"^([ \t]*)-[ \t]+Assets\.xcassets[^\n]*\n", text, flags=re.MULTILINE)
+                      if m2:
+                          indent = m2.group(1)
+                          text = text[:m2.end()] + f"{indent}- AppIcon.icon\n" + text[m2.end():]
 
           open(path, "w", encoding="utf-8").write(text)
           PYEOF
@@ -384,6 +490,52 @@ jobs:
 
           # Verify background audio mode survived the build
           /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$APP_BUNDLE/Info.plist" | grep -qw "audio"
+
+          # Verify iOS 26 Liquid Glass IconImageStack in Assets.car (and compile directly via actool if needed)
+          USE_LIQUID_GLASS="${{ steps.ios_icons.outputs.use_liquid_glass }}"
+          if [ "$USE_LIQUID_GLASS" = "true" ] && [ -d "src-tauri/icons/AppIcon.icon" ]; then
+            HAS_STACK="false"
+            if [ -f "$APP_BUNDLE/Assets.car" ] && xcrun assetutil --info "$APP_BUNDLE/Assets.car" | grep -qi "IconImageStack"; then
+              HAS_STACK="true"
+              echo "Verified Liquid Glass IconImageStack inside $APP_BUNDLE/Assets.car!"
+            fi
+            if [ "$HAS_STACK" != "true" ]; then
+              echo "IconImageStack not found in built Assets.car; compiling AppIcon.icon directly into .app via actool..."
+              rm -rf "$APP_BUNDLE/AppIcon.icon"
+              PARTIAL_PLIST="/tmp/carminium-appicon-partial.plist"
+              rm -f "$PARTIAL_PLIST"
+              ACTOOL_INPUTS=("src-tauri/icons/AppIcon.icon")
+              if [ -d "src-tauri/gen/apple/Assets.xcassets" ]; then
+                ACTOOL_INPUTS+=("src-tauri/gen/apple/Assets.xcassets")
+              fi
+              xcrun actool \
+                --compile "$APP_BUNDLE" \
+                --platform iphoneos \
+                --minimum-deployment-target 15.0 \
+                --target-device iphone \
+                --target-device ipad \
+                --app-icon AppIcon \
+                --output-partial-info-plist "$PARTIAL_PLIST" \
+                "${ACTOOL_INPUTS[@]}"
+              if [ -f "$PARTIAL_PLIST" ]; then
+                python3 - "$APP_BUNDLE/Info.plist" "$PARTIAL_PLIST" <<'PYEOF'
+          import plistlib, sys
+          info_path, partial_path = sys.argv[1], sys.argv[2]
+          with open(info_path, "rb") as f:
+              info = plistlib.load(f)
+          with open(partial_path, "rb") as f:
+              partial = plistlib.load(f)
+          for k, v in partial.items():
+              info[k] = v
+          info["CFBundleIconName"] = "AppIcon"
+          with open(info_path, "wb") as f:
+              plistlib.dump(info, f)
+          print("Merged actool partial Info.plist keys:", list(partial.keys()))
+          PYEOF
+              fi
+              xcrun assetutil --info "$APP_BUNDLE/Assets.car" | grep -E '"Name"|"AssetType"|"Appearance"' | head -n 40 || true
+            fi
+          fi
 
           # Strip any stray signature directories if present
           rm -rf "$APP_BUNDLE/_CodeSignature"
