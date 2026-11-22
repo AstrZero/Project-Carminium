@@ -4557,6 +4557,7 @@ if (_videoBg) _videoBg.onFullscreenChange();
     var pane = document.getElementById('now-playing-pane');
     if (!pane || !pane.classList.contains('fullscreen')) return null;
     if (pane.classList.contains('fs-transitioning')) return null;
+    if (window.__CARMINIUM_MOBILE__ && window.innerWidth <= 767) return null;
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return null;
     var candidates = [
       pane.querySelector('.np-panel--info.active'),

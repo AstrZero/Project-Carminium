@@ -844,6 +844,219 @@
   }
 
   var _npSheetCloseTimer = null;
+  var _amCoverGhost = null;
+  var _amHiddenTarget = null;
+  var _amPendingCleanup = null;
+
+  var _AM_SPRING = 'cubic-bezier(0.28, 0.88, 0.24, 1)';
+  var _AM_SHEET_EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
+
+  function _reducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  function _cancelActiveCoverMorph() {
+    if (_amPendingCleanup) {
+      var fn = _amPendingCleanup;
+      _amPendingCleanup = null;
+      fn();
+    }
+    if (_amCoverGhost && _amCoverGhost.parentNode) {
+      _amCoverGhost.parentNode.removeChild(_amCoverGhost);
+    }
+    _amCoverGhost = null;
+    if (_amHiddenTarget) {
+      _amHiddenTarget.style.opacity = '';
+      _amHiddenTarget = null;
+    }
+  }
+
+  function _readRadiusPx(el, fallback) {
+    if (!el) return fallback;
+    var r = parseFloat(window.getComputedStyle(el).borderRadius);
+    return isFinite(r) ? r : fallback;
+  }
+
+  function _spawnCoverGhost(sourceEl, targetRect, targetRadius) {
+    var ghost = document.createElement('div');
+    ghost.className = 'mobile-am-cover-ghost';
+    ghost.style.left = targetRect.left + 'px';
+    ghost.style.top = targetRect.top + 'px';
+    ghost.style.width = targetRect.width + 'px';
+    ghost.style.height = targetRect.height + 'px';
+    ghost.style.borderRadius = targetRadius + 'px';
+
+    var img = sourceEl && sourceEl.querySelector('img');
+    var src = img && img.style.display !== 'none' ? img.getAttribute('src') : '';
+    if (!src) {
+      var fallbackImg = document.getElementById('np-cover-img') || document.getElementById('mini-cover-img');
+      if (fallbackImg && fallbackImg.style.display !== 'none') src = fallbackImg.getAttribute('src') || '';
+    }
+    if (src) {
+      var gImg = document.createElement('img');
+      gImg.src = src;
+      gImg.alt = '';
+      ghost.appendChild(gImg);
+    } else {
+      var icon = document.createElement('span');
+      icon.className = 'material-symbols-rounded';
+      icon.textContent = 'music_note';
+      icon.style.fontSize = Math.max(20, Math.round(targetRect.width * 0.38)) + 'px';
+      ghost.appendChild(icon);
+    }
+    document.body.appendChild(ghost);
+    return ghost;
+  }
+
+  function _morphCover(fromRect, fromRadius, toEl, sourceEl, durationMs, easing) {
+    if (_reducedMotion() || !fromRect || !toEl || !toEl.animate) return;
+    if (fromRect.width < 4 || fromRect.height < 4) return;
+    var toRect = toEl.getBoundingClientRect();
+    if (toRect.width < 4 || toRect.height < 4) return;
+
+    _cancelActiveCoverMorph();
+
+    var toRadius = _readRadiusPx(toEl, 14);
+    var ghost = _spawnCoverGhost(sourceEl || toEl, toRect, toRadius);
+    _amCoverGhost = ghost;
+    _amHiddenTarget = toEl;
+    toEl.style.opacity = '0';
+
+    var dx = fromRect.left - toRect.left;
+    var dy = fromRect.top - toRect.top;
+    var sx = fromRect.width / toRect.width;
+    var sy = fromRect.height / toRect.height;
+    var startRadius = Math.round(fromRadius / Math.max(0.15, Math.min(sx, sy)));
+
+    var finished = false;
+    function finish() {
+      if (finished) return;
+      finished = true;
+      if (_amCoverGhost === ghost) _amCoverGhost = null;
+      if (ghost.parentNode) ghost.parentNode.removeChild(ghost);
+      if (_amHiddenTarget === toEl) _amHiddenTarget = null;
+      toEl.style.opacity = '';
+    }
+    _amPendingCleanup = finish;
+
+    var anim = ghost.animate([
+      {
+        transform: 'translate3d(' + dx.toFixed(1) + 'px, ' + dy.toFixed(1) + 'px, 0) scale(' + sx.toFixed(4) + ', ' + sy.toFixed(4) + ')',
+        borderRadius: startRadius + 'px',
+        boxShadow: '0 6px 18px rgba(0, 0, 0, 0.18)'
+      },
+      {
+        transform: 'translate3d(0px, 0px, 0) scale(1, 1)',
+        borderRadius: toRadius + 'px',
+        boxShadow: '0 16px 40px rgba(0, 0, 0, 0.28)'
+      }
+    ], {
+      duration: durationMs || 420,
+      easing: easing || _AM_SPRING,
+      fill: 'forwards'
+    });
+    anim.onfinish = finish;
+    anim.oncancel = finish;
+    setTimeout(finish, (durationMs || 420) + 90);
+  }
+
+  function _getVisibleNpCoverEl(pane) {
+    if (!pane) return null;
+    var isCompact = pane.classList.contains('np-content-lyrics') || pane.classList.contains('ios-queue-open');
+    return document.getElementById(isCompact ? 'np-mini-cover' : 'np-cover');
+  }
+
+  function _animateStaggerIn(els, dy, duration, delay) {
+    if (_reducedMotion()) return;
+    els.forEach(function (el) {
+      if (!el || !el.animate || window.getComputedStyle(el).display === 'none') return;
+      el.animate([
+        { opacity: 0, transform: 'translate3d(0, ' + (dy || 16) + 'px, 0)' },
+        { opacity: 1, transform: 'translate3d(0, 0, 0)' }
+      ], {
+        duration: duration || 300,
+        delay: delay || 50,
+        easing: _AM_SHEET_EASE,
+        fill: 'backwards'
+      });
+    });
+  }
+
+  function _glideElementFrom(el, prevRect, duration) {
+    if (_reducedMotion() || !el || !prevRect || !el.animate) return;
+    if (window.getComputedStyle(el).display === 'none') return;
+    var nowRect = el.getBoundingClientRect();
+    var dy = prevRect.top - nowRect.top;
+    if (Math.abs(dy) < 1.5) return;
+    el.animate([
+      { transform: 'translate3d(0, ' + dy.toFixed(1) + 'px, 0)' },
+      { transform: 'translate3d(0, 0, 0)' }
+    ], {
+      duration: duration || 360,
+      easing: _AM_SPRING,
+      fill: 'none'
+    });
+  }
+
+  function _captureNpModeTransition(pane) {
+    if (!pane || !pane.classList.contains('fullscreen') || _reducedMotion()) return null;
+    var fromCover = _getVisibleNpCoverEl(pane);
+    var fromIsCompact = pane.classList.contains('np-content-lyrics') || pane.classList.contains('ios-queue-open');
+    var mainCtrl = pane.querySelector('.np-main-controls');
+    return {
+      fromIsCompact: fromIsCompact,
+      fromCoverEl: fromCover,
+      fromCoverRect: fromCover ? fromCover.getBoundingClientRect() : null,
+      fromCoverRadius: _readRadiusPx(fromCover, fromIsCompact ? 10 : 16),
+      mainCtrlRect: mainCtrl ? mainCtrl.getBoundingClientRect() : null
+    };
+  }
+
+  function _playNpModeTransition(pane, snap) {
+    if (!pane || !snap || _reducedMotion()) return;
+    var toIsCompact = pane.classList.contains('np-content-lyrics') || pane.classList.contains('ios-queue-open');
+    var toCover = _getVisibleNpCoverEl(pane);
+    var mainCtrl = pane.querySelector('.np-main-controls');
+
+    // 1. Shared-element cover morph when switching between Solo (big cover) <-> Lyrics/Queue (mini top cover)
+    if (snap.fromIsCompact !== toIsCompact && snap.fromCoverRect && toCover) {
+      _morphCover(snap.fromCoverRect, snap.fromCoverRadius, toCover, snap.fromCoverEl, 400, _AM_SPRING);
+    }
+
+    // 2. Smooth FLIP glide for bottom playback controls
+    if (mainCtrl && snap.mainCtrlRect) {
+      _glideElementFrom(mainCtrl, snap.mainCtrlRect, 360);
+    }
+
+    // 3. Apple Music staggered content reveal
+    if (pane.classList.contains('ios-queue-open')) {
+      if (!snap.fromIsCompact) {
+        _animateStaggerIn([pane.querySelector('.np-mini-text')], 12, 280, 60);
+      }
+      _animateStaggerIn([pane.querySelector('.np-panel--queue')], 22, 320, 50);
+    } else if (pane.classList.contains('np-content-lyrics')) {
+      if (!snap.fromIsCompact) {
+        _animateStaggerIn([pane.querySelector('.np-mini-text')], 12, 280, 60);
+      }
+      _animateStaggerIn([pane.querySelector('.np-panel--lyrics')], 22, 340, 55);
+    } else {
+      // Returning to Solo cover view
+      _animateStaggerIn([
+        pane.querySelector('.np-track-meta'),
+        pane.querySelector('.np-progress-wrap'),
+        pane.querySelector('.np-secondary-controls')
+      ], 14, 300, 75);
+    }
+  }
+
+  function _resetMainDepth() {
+    var main = document.getElementById('app-main');
+    if (!main) return;
+    main.style.transition = '';
+    main.style.transform = '';
+    main.style.borderRadius = '';
+    main.style.filter = '';
+  }
 
   function _openPhoneNowPlaying() {
     var pane = document.getElementById('now-playing-pane');
@@ -852,26 +1065,57 @@
       clearTimeout(_npSheetCloseTimer);
       _npSheetCloseTimer = null;
     }
+    _cancelActiveCoverMorph();
     _clearInlineMotion(pane);
+    _resetMainDepth();
+
+    // Capture Mini Player bar & cover BEFORE hiding mini-player
+    var mini = document.getElementById('mini-player');
+    var miniCover = mini ? mini.querySelector('.mini-player-cover') : null;
+    var miniRect = mini ? mini.getBoundingClientRect() : null;
+    var miniCoverRect = miniCover ? miniCover.getBoundingClientRect() : null;
+    var miniCoverRadius = _readRadiusPx(miniCover, 12);
+
     pane.classList.remove('collapsed', 'ios-queue-open', 'mobile-sheet-closing');
     var qPanel = pane.querySelector('.np-panel--queue');
     if (qPanel) qPanel.classList.remove('active');
-    pane.classList.add('fullscreen', 'mobile-sheet-opening');
+
+    // Enforce 2-mode (solo or lyrics) on mobile before measuring target layout
+    if (pane.classList.contains('np-content-duo') ||
+        (!pane.classList.contains('np-content-solo') && !pane.classList.contains('np-content-lyrics'))) {
+      _setPhoneNpMode('solo');
+    }
+
+    pane.classList.add('fullscreen');
     document.body.classList.remove('player-collapsed');
     document.body.classList.add('np-fullscreen');
     _syncSubpageState({ skipAnim: true });
 
-    var clearOpen = function () {
-      pane.classList.remove('mobile-sheet-opening');
-      pane.removeEventListener('animationend', clearOpen);
-    };
-    pane.addEventListener('animationend', clearOpen);
-    setTimeout(clearOpen, 380);
+    if (!_reducedMotion() && pane.animate) {
+      var startY = miniRect ? Math.max(0, miniRect.top) : window.innerHeight;
+      pane.animate([
+        { transform: 'translate3d(0, ' + startY.toFixed(0) + 'px, 0)', borderRadius: '20px', opacity: 0.55 },
+        { transform: 'translate3d(0, 0, 0)', borderRadius: '0px', opacity: 1 }
+      ], {
+        duration: 420,
+        easing: _AM_SHEET_EASE,
+        fill: 'none'
+      });
 
-    // Enforce 2-mode (solo or lyrics) on mobile: if currently in duo, switch to solo
-    if (pane.classList.contains('np-content-duo') ||
-        (!pane.classList.contains('np-content-solo') && !pane.classList.contains('np-content-lyrics'))) {
-      _setPhoneNpMode('solo');
+      var targetCover = _getVisibleNpCoverEl(pane);
+      if (miniCoverRect && targetCover) {
+        _morphCover(miniCoverRect, miniCoverRadius, targetCover, miniCover, 440, _AM_SPRING);
+      }
+
+      _animateStaggerIn([
+        pane.querySelector('.np-top-bar'),
+        pane.querySelector('.np-track-meta'),
+        pane.querySelector('.np-mini-text'),
+        pane.querySelector('.np-progress-wrap'),
+        pane.querySelector('.np-main-controls'),
+        pane.querySelector('.np-secondary-controls'),
+        pane.querySelector('.np-panel--lyrics.active')
+      ], 18, 340, 65);
     }
   }
 
@@ -879,6 +1123,11 @@
     var pane = document.getElementById('now-playing-pane');
     if (!pane) return;
     _clearInlineMotion(pane);
+    _resetMainDepth();
+    var cBig = document.getElementById('np-cover');
+    var cMini = document.getElementById('np-mini-cover');
+    if (cBig) cBig.style.visibility = '';
+    if (cMini) cMini.style.visibility = '';
     pane.classList.remove('fullscreen', 'ios-queue-open', 'mobile-sheet-opening', 'mobile-sheet-closing');
     var qPanel = pane.querySelector('.np-panel--queue');
     if (qPanel) qPanel.classList.remove('active');
@@ -895,26 +1144,60 @@
       clearTimeout(_npSheetCloseTimer);
       _npSheetCloseTimer = null;
     }
-    if (immediate || !pane.classList.contains('fullscreen')) {
+    if (immediate || _reducedMotion() || !pane.classList.contains('fullscreen') || !pane.animate) {
+      _cancelActiveCoverMorph();
       _finishClosePhoneNowPlaying();
       return;
     }
-    _clearInlineMotion(pane);
-    pane.classList.remove('mobile-sheet-opening');
+
+    // Capture current cover rect INSIDE fullscreen player before dismissing
+    var fromCover = _getVisibleNpCoverEl(pane);
+    var fromCoverRect = fromCover ? fromCover.getBoundingClientRect() : null;
+    var fromCoverRadius = _readRadiusPx(fromCover, 16);
+
+    // Reveal main page + mini-player underneath so we can measure target miniCoverRect
+    // AND start main page rising smoothly back to scale(1)
+    _resetMainDepth();
+    document.body.classList.remove('np-fullscreen');
+    document.body.classList.add('player-collapsed');
+
+    var mini = document.getElementById('mini-player');
+    var miniCover = mini ? mini.querySelector('.mini-player-cover') : null;
+    var miniRect = mini ? mini.getBoundingClientRect() : null;
+
+    if (fromCoverRect && miniCover) {
+      if (fromCover) fromCover.style.visibility = 'hidden';
+      _morphCover(fromCoverRect, fromCoverRadius, miniCover, fromCover, 370, _AM_SHEET_EASE);
+    }
+
+    var startTransform = pane.style.transform || 'translate3d(0, 0, 0)';
+    var startRadius = pane.style.borderRadius || '0px';
+    var endY = miniRect ? Math.max(window.innerHeight * 0.72, miniRect.top) : window.innerHeight;
     pane.classList.add('mobile-sheet-closing');
+    pane.style.transition = 'none';
+
+    var sheetAnim = pane.animate([
+      { transform: startTransform, borderRadius: startRadius, opacity: 1 },
+      { transform: 'translate3d(0, ' + endY.toFixed(0) + 'px, 0)', borderRadius: '24px', opacity: 0 }
+    ], {
+      duration: 330,
+      easing: _AM_SHEET_EASE,
+      fill: 'forwards'
+    });
+
     var done = false;
     function onEnd() {
       if (done) return;
       done = true;
-      pane.removeEventListener('animationend', onEnd);
       if (_npSheetCloseTimer) {
         clearTimeout(_npSheetCloseTimer);
         _npSheetCloseTimer = null;
       }
+      sheetAnim.cancel();
       _finishClosePhoneNowPlaying();
     }
-    pane.addEventListener('animationend', onEnd);
-    _npSheetCloseTimer = setTimeout(onEnd, 280);
+    sheetAnim.onfinish = onEnd;
+    _npSheetCloseTimer = setTimeout(onEnd, 370);
   }
 
   function _setupPhonePlaybackBehavior() {
@@ -944,8 +1227,8 @@
       }, true);
     }
 
-    // Top-right queue button on iPhone: Apple Music mutual-exclusion logic with lyrics
-    // (closed -> open queue & deactivate lyrics; open -> close queue & return to solo cover)
+    // Top-right queue button on mobile: Apple Music mutual-exclusion logic with lyrics
+    // (closed -> open queue & morph big cover to top mini cover; open -> close queue & morph back to solo cover)
     var queueBtn = document.getElementById('btn-ios-queue');
     if (queueBtn) {
       queueBtn.addEventListener('click', function (e) {
@@ -953,12 +1236,15 @@
         e.preventDefault();
         var pane = document.getElementById('now-playing-pane');
         if (!pane) return;
+        var snap = _captureNpModeTransition(pane);
         var qPanel = pane.querySelector('.np-panel--queue');
         if (pane.classList.contains('ios-queue-open')) {
           _setPhoneNpMode('solo');
+          _playNpModeTransition(pane, snap);
         } else {
           pane.classList.add('ios-queue-open');
           if (qPanel) qPanel.classList.add('active');
+          _playNpModeTransition(pane, snap);
           requestAnimationFrame(function () {
             _refreshPhoneQueuePanel();
           });
@@ -966,16 +1252,54 @@
       });
     }
 
-    // Clicking solo or lyrics segment while in Queue closes Queue and switches cleanly
+    // Clicking solo or lyrics segment: capture BEFORE cover rect (capture phase),
+    // let now_playing.js switch mode, then run Apple Music shared-element cover morph + stagger!
     document.querySelectorAll('.np-content-seg').forEach(function (seg) {
+      var pendingSnap = null;
+      seg.addEventListener('click', function () {
+        if (!_isPhone()) return;
+        var pane = document.getElementById('now-playing-pane');
+        if (!pane || !pane.classList.contains('fullscreen')) return;
+        var targetMode = seg.getAttribute('data-mode');
+        var curIsQueue = pane.classList.contains('ios-queue-open');
+        var curIsLyrics = !curIsQueue && pane.classList.contains('np-content-lyrics');
+        var curIsSolo = !curIsQueue && pane.classList.contains('np-content-solo');
+        if ((targetMode === 'solo' && curIsSolo) || (targetMode === 'lyrics' && curIsLyrics)) {
+          pendingSnap = null;
+          return;
+        }
+        pendingSnap = _captureNpModeTransition(pane);
+      }, true);
+
       seg.addEventListener('click', function () {
         var pane = document.getElementById('now-playing-pane');
         if (!pane) return;
         pane.classList.remove('ios-queue-open');
         var qPanel = pane.querySelector('.np-panel--queue');
         if (qPanel) qPanel.classList.remove('active');
+        if (pendingSnap && _isPhone()) {
+          var snap = pendingSnap;
+          pendingSnap = null;
+          _playNpModeTransition(pane, snap);
+        }
       });
     });
+
+    // Tapping top #np-mini-info in Lyrics / Queue view morphs smoothly back to Solo cover (Apple Music behavior)
+    var npMiniInfo = document.getElementById('np-mini-info');
+    if (npMiniInfo) {
+      npMiniInfo.addEventListener('click', function (e) {
+        if (!_isPhone()) return;
+        if (e.target.closest('button')) return;
+        var pane = document.getElementById('now-playing-pane');
+        if (!pane || !pane.classList.contains('fullscreen')) return;
+        if (pane.classList.contains('np-content-lyrics') || pane.classList.contains('ios-queue-open')) {
+          var snap = _captureNpModeTransition(pane);
+          _setPhoneNpMode('solo');
+          _playNpModeTransition(pane, snap);
+        }
+      });
+    }
 
     // Bottom nav Settings button & More button
     var navSettings = document.getElementById('nav-settings');
@@ -1238,6 +1562,19 @@
       npDragLastDy = clamped;
       pane.style.transform = 'translate3d(0, ' + clamped + 'px, 0)';
       pane.style.borderRadius = Math.min(28, Math.round(clamped * 0.16)) + 'px';
+
+      // Apple Music live depth: smoothly bring recessed #app-main forward as user drags sheet down
+      var main = document.getElementById('app-main');
+      if (main) {
+        var progress = Math.min(1, clamped / Math.max(260, window.innerHeight * 0.55));
+        var sc = 0.925 + 0.075 * progress;
+        var br = Math.round(24 * (1 - progress));
+        var bright = 0.76 + 0.24 * progress;
+        main.style.transition = 'none';
+        main.style.transform = 'scale(' + sc.toFixed(4) + ')';
+        main.style.borderRadius = br + 'px';
+        main.style.filter = 'brightness(' + bright.toFixed(3) + ')';
+      }
     }, { passive: false });
 
     function _finishNpSwipe(cancelled) {
@@ -1255,18 +1592,16 @@
       if (!pane) return;
       var shouldDismiss = !cancelled && (dy > 110 || vy > 0.55);
       if (shouldDismiss) {
-        pane.style.transition = 'transform 200ms cubic-bezier(0.32, 0.72, 0, 1)';
-        pane.style.transform = 'translate3d(0, 100%, 0)';
-        setTimeout(function () {
-          _closePhoneNowPlaying(true);
-        }, 195);
+        // Trigger full Apple Music close morph FROM the current dragged cover position right into Mini Player!
+        _closePhoneNowPlaying(false);
       } else {
-        pane.style.transition = 'transform 240ms cubic-bezier(0.32, 0.72, 0, 1), border-radius 240ms ease';
+        _resetMainDepth();
+        pane.style.transition = 'transform 260ms cubic-bezier(0.28, 0.88, 0.24, 1), border-radius 260ms ease';
         pane.style.transform = 'translate3d(0, 0, 0)';
         pane.style.borderRadius = '';
         setTimeout(function () {
           _clearInlineMotion(pane);
-        }, 245);
+        }, 270);
       }
     }
 
@@ -1347,10 +1682,12 @@
       return 'handled';
     }
 
-    // 3. Close Now Playing queue drawer if open inside fullscreen player
+    // 3. Close Now Playing queue drawer if open inside fullscreen player (with Apple Music morph!)
     var npPane = document.getElementById('now-playing-pane');
     if (npPane && npPane.classList.contains('ios-queue-open')) {
+      var qSnap = _captureNpModeTransition(npPane);
       _setPhoneNpMode('solo');
+      _playNpModeTransition(npPane, qSnap);
       return 'handled';
     }
 

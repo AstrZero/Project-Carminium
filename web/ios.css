@@ -1217,22 +1217,67 @@ html[data-platform="ios"] .now-playing-pane .np-volume {
     will-change: transform, border-radius;
     box-shadow: -8px 0 28px rgba(0, 0, 0, 0.18);
   }
+
+  /* Apple Music Card-Stack Depth & Shared-Element Morph (Main Page <-> Now Playing <-> Lyrics) */
+  html[data-platform="ios"] .app-root {
+    background: #000;
+  }
+  html[data-platform="ios"] .app-main {
+    background: var(--md-surface);
+    transform-origin: center top;
+    transition: transform 420ms cubic-bezier(0.32, 0.72, 0, 1),
+                border-radius 420ms cubic-bezier(0.32, 0.72, 0, 1),
+                filter 420ms cubic-bezier(0.32, 0.72, 0, 1);
+    will-change: transform, border-radius;
+  }
+  html[data-platform="ios"] body.np-fullscreen .app-main {
+    transform: scale(0.925) translate3d(0, calc(var(--ios-safe-top) * 0.25 + 6px), 0);
+    border-radius: 24px !important;
+    overflow: hidden !important;
+    filter: brightness(0.76);
+  }
+  html[data-platform="ios"] .now-playing-pane.fullscreen {
+    z-index: 960 !important;
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.32);
+  }
   html[data-platform="ios"] .now-playing-pane.fullscreen.mobile-sheet-opening {
-    animation: mobile-np-sheet-in 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
-    will-change: transform, opacity;
+    animation: none !important;
   }
   html[data-platform="ios"] .now-playing-pane.fullscreen.mobile-sheet-closing {
-    animation: mobile-np-sheet-out 240ms cubic-bezier(0.32, 0.72, 0, 1) both;
+    animation: none !important;
     pointer-events: none !important;
-    will-change: transform, opacity;
+  }
+  html[data-platform="ios"] .mobile-am-cover-ghost {
+    position: fixed;
+    z-index: 10050;
+    pointer-events: none;
+    overflow: hidden;
+    transform-origin: top left;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--md-surface-container-highest);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28);
+    will-change: transform, border-radius, opacity;
+  }
+  html[data-platform="ios"] .mobile-am-cover-ghost img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  html[data-platform="ios"] .mobile-am-cover-ghost .material-symbols-rounded {
+    font-size: 42%;
+    color: var(--md-primary);
   }
 
   @media (prefers-reduced-motion: reduce) {
     html[data-platform="ios"] .mobile-anim-push-in,
     html[data-platform="ios"] .mobile-anim-pop-in,
-    html[data-platform="ios"] .now-playing-pane.fullscreen.mobile-sheet-opening,
-    html[data-platform="ios"] .now-playing-pane.fullscreen.mobile-sheet-closing {
+    html[data-platform="ios"] .app-main,
+    html[data-platform="ios"] .now-playing-pane.fullscreen {
       animation: none !important;
+      transition: none !important;
     }
   }
 }
