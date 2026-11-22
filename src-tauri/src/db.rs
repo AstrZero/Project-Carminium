@@ -864,9 +864,80 @@ impl LibraryDb {
             [],
             |r| r.get(0),
         )?;
+        let total_duration_ms: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(COALESCE(t.duration_ms, 0)), 0) \
+                 FROM play_history h LEFT JOIN tracks t ON t.id = h.track_id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
         let total_tracks: i64 =
             conn.query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))?;
+
+        let daily_activity: Vec<Value> = {
+            let mut stmt = conn.prepare(
+                "SELECT strftime('%Y-%m-%d', played_at, 'unixepoch', 'localtime') AS day, \
+                 COUNT(*) AS cnt \
+                 FROM play_history \
+                 WHERE played_at >= strftime('%s', 'now', '-14 days') \
+                 GROUP BY day ORDER BY day ASC",
+            )?;
+            let out: Vec<Value> = stmt
+                .query_map([], |r| {
+                    let day: String = r.get::<_, Option<String>>(0)?.unwrap_or_default();
+                    let count: i64 = r.get(1)?;
+                    Ok(json!({ "day": day, "count": count }))
+                })?
+                .filter_map(|r| r.ok())
+                .filter(|v| !v["day"].as_str().unwrap_or("").is_empty())
+                .collect();
+            out
+        };
+
+        let top_artists: Vec<Value> = {
+            let mut stmt = conn.prepare(
+                "SELECT COALESCE(NULLIF(TRIM(t.artist), ''), '未知艺术家') AS name, \
+                 COUNT(*) AS play_count \
+                 FROM play_history h JOIN tracks t ON t.id = h.track_id \
+                 GROUP BY name ORDER BY play_count DESC LIMIT 5",
+            )?;
+            let out: Vec<Value> = stmt
+                .query_map([], |r| {
+                    let name: String = r.get(0)?;
+                    let play_count: i64 = r.get(1)?;
+                    Ok(json!({ "name": name, "play_count": play_count }))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            out
+        };
+
+        let top_albums: Vec<Value> = {
+            let mut stmt = conn.prepare(
+                "SELECT COALESCE(NULLIF(TRIM(t.album), ''), '未知专辑') AS name, \
+                 COUNT(*) AS play_count \
+                 FROM play_history h JOIN tracks t ON t.id = h.track_id \
+                 GROUP BY name ORDER BY play_count DESC LIMIT 5",
+            )?;
+            let out: Vec<Value> = stmt
+                .query_map([], |r| {
+                    let name: String = r.get(0)?;
+                    let play_count: i64 = r.get(1)?;
+                    Ok(json!({ "name": name, "play_count": play_count }))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            out
+        };
+
         Ok(json!({
+            "totalPlays": total_plays,
+            "uniqueTracks": unique_tracks,
+            "totalDurationMs": total_duration_ms,
+            "dailyActivity": daily_activity,
+            "topArtists": top_artists,
+            "topAlbums": top_albums,
             "total_plays": total_plays,
             "unique_tracks": unique_tracks,
             "total_tracks": total_tracks,

@@ -255,6 +255,20 @@ jobs:
           echo "Verified UIBackgroundModes:"
           /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST"
 
+      - name: Rebuild Material Symbols Rounded font subset (official variable font)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f Fonts/MaterialSymbolsRounded-VariableFont.ttf ] && [ -f scripts/subset_fonts.py ]; then
+            python3 -m pip install --break-system-packages --quiet fonttools brotli || python3 -m pip install --user --quiet fonttools brotli
+            python3 scripts/subset_fonts.py
+            if [ -f web/fonts/material-symbols-rounded.subset.woff2 ]; then
+              mv -f web/fonts/material-symbols-rounded.subset.woff2 web/fonts/material-symbols-rounded.woff2
+            fi
+            rm -f web/fonts/_msr_pruned_tmp.woff2
+            ls -lh web/fonts/material-symbols-rounded.woff2
+          fi
+
       - name: Build & Archive unsigned iOS app (tauri ios build)
         id: build_ios
         shell: bash

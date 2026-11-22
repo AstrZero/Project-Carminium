@@ -15,6 +15,7 @@ pub struct AppPaths {
     pub cache_dir: PathBuf,
     pub doc_dir: PathBuf,
     pub music_dir: PathBuf,
+    pub private_libraries_dir: PathBuf,
 }
 
 fn dump(v: &impl serde::Serialize) -> Value {
@@ -144,19 +145,37 @@ pub async fn dispatch_bridge<R: Runtime>(
         }
 
         // ── Local Files / iOS Document Picker ───────────────────────
-        "open_folder_dialog" | "pick_audio_files" => {
-            let dest = paths.music_dir.to_string_lossy().to_string();
-            match app.carminium_audio().pick_audio_files(dest.clone()).await {
+        // Imported libraries are placed inside `private_libraries_dir` so they stay
+        // separated from the user's public Files.app `Documents/` folder.
+        "open_folder_dialog" => {
+            let dest = paths.private_libraries_dir.to_string_lossy().to_string();
+            match app.carminium_audio().pick_audio_files(dest).await {
                 Ok(res) if !res.canceled && !res.copied_paths.is_empty() => {
+                    let target = res
+                        .imported_dir
+                        .unwrap_or_else(|| paths.private_libraries_dir.to_string_lossy().to_string());
+                    Value::String(target)
+                }
+                _ => Value::String(String::new()),
+            }
+        }
+        "pick_audio_files" => {
+            let dest = paths.private_libraries_dir.to_string_lossy().to_string();
+            match app.carminium_audio().pick_audio_files(dest).await {
+                Ok(res) if !res.canceled && !res.copied_paths.is_empty() => {
+                    let target_str = res
+                        .imported_dir
+                        .unwrap_or_else(|| paths.private_libraries_dir.to_string_lossy().to_string());
+                    let target_path = PathBuf::from(&target_str);
+                    let _ = db.ensure_folder(&target_str);
                     let db_c = db.clone();
                     let app_c = app.clone();
-                    let scan_root = paths.doc_dir.clone();
                     tauri::async_runtime::spawn_blocking(move || {
-                        let _ = scanner::scan_local_folder(&db_c, &scan_root);
+                        let _ = scanner::scan_local_folder(&db_c, &target_path);
                         emit_folders_updated(&app_c, &db_c);
                         emit_bridge(&app_c, "library_updated", json!(""));
                     });
-                    Value::String(paths.doc_dir.to_string_lossy().to_string())
+                    Value::String(target_str)
                 }
                 _ => Value::String(String::new()),
             }
@@ -182,6 +201,12 @@ pub async fn dispatch_bridge<R: Runtime>(
         "remove_folder" => {
             let folder_path = arg_str(&args, 0);
             let _ = db.remove_folder(&folder_path);
+            // If this is a private imported library folder, clean up copied files on disk;
+            // never delete user's public Files.app Documents/ directory.
+            let p = PathBuf::from(&folder_path);
+            if p.starts_with(&paths.private_libraries_dir) && p != paths.private_libraries_dir {
+                let _ = std::fs::remove_dir_all(&p);
+            }
             emit_folders_updated(&app, &db);
             emit_bridge(&app, "library_updated", json!(""));
             Value::Null

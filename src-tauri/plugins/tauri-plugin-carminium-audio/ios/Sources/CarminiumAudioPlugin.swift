@@ -52,6 +52,7 @@ private struct PickFilesArgs: Decodable {
 
 private struct PickFilesResult: Encodable {
   let copiedPaths: [String]
+  let importedDir: String?
   let canceled: Bool
 }
 
@@ -117,6 +118,18 @@ class CarminiumAudioPlugin: Plugin {
     super.init()
     #if os(iOS)
     registerAudioSessionNotifications()
+    #endif
+  }
+
+  @objc public override func load(webview: WKWebView) {
+    super.load(webview: webview)
+    #if os(iOS)
+    runOnMain {
+      webview.scrollView.bouncesZoom = false
+      webview.scrollView.minimumZoomScale = 1.0
+      webview.scrollView.maximumZoomScale = 1.0
+      webview.scrollView.pinchGestureRecognizer?.isEnabled = false
+    }
     #endif
   }
 
@@ -294,7 +307,7 @@ class CarminiumAudioPlugin: Plugin {
     #if os(iOS)
     runOnMain {
       guard let vc = self.resolveTopViewController() else {
-        invoke.resolve(PickFilesResult(copiedPaths: [], canceled: true))
+        invoke.resolve(PickFilesResult(copiedPaths: [], importedDir: nil, canceled: true))
         return
       }
       let dest = URL(fileURLWithPath: args.destinationDir, isDirectory: true)
@@ -310,7 +323,7 @@ class CarminiumAudioPlugin: Plugin {
       vc.present(picker, animated: true)
     }
     #else
-    invoke.resolve(PickFilesResult(copiedPaths: [], canceled: true))
+    invoke.resolve(PickFilesResult(copiedPaths: [], importedDir: nil, canceled: true))
     #endif
   }
 
@@ -736,6 +749,34 @@ extension CarminiumAudioPlugin: UIDocumentPickerDelegate {
       var copied: [String] = []
       let fm = FileManager.default
 
+      // Create a dedicated private library folder for this import (named after the picked folder if single folder)
+      var folderBaseName = "Import"
+      if urls.count == 1 {
+        let single = urls[0]
+        let singleAccessed = single.startAccessingSecurityScopedResource()
+        var singleIsDir: ObjCBool = false
+        let exists = fm.fileExists(atPath: single.path, isDirectory: &singleIsDir)
+        if singleAccessed { single.stopAccessingSecurityScopedResource() }
+        if exists && singleIsDir.boolValue && !single.lastPathComponent.isEmpty {
+          folderBaseName = single.lastPathComponent
+        }
+      }
+      if folderBaseName == "Import" {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyyMMdd-HHmmss"
+        folderBaseName = "导入音乐-\(fmt.string(from: Date()))"
+      }
+
+      var targetLibDir = destDir.appendingPathComponent(folderBaseName, isDirectory: true)
+      if fm.fileExists(atPath: targetLibDir.path) {
+        var idx = 1
+        while fm.fileExists(atPath: targetLibDir.path) {
+          targetLibDir = destDir.appendingPathComponent("\(folderBaseName) (\(idx))", isDirectory: true)
+          idx += 1
+        }
+      }
+      try? fm.createDirectory(at: targetLibDir, withIntermediateDirectories: true)
+
       for url in urls {
         let accessed = url.startAccessingSecurityScopedResource()
         defer {
@@ -752,7 +793,7 @@ extension CarminiumAudioPlugin: UIDocumentPickerDelegate {
             for case let fileURL as URL in enumerator {
               let ext = fileURL.pathExtension.lowercased()
               guard Self.audioExtensions.contains(ext) else { continue }
-              if let dst = self.copyAudioFile(fileURL, into: destDir, fm: fm) {
+              if let dst = self.copyAudioFile(fileURL, into: targetLibDir, fm: fm) {
                 copied.append(dst.path)
               }
             }
@@ -760,15 +801,23 @@ extension CarminiumAudioPlugin: UIDocumentPickerDelegate {
         } else {
           let ext = url.pathExtension.lowercased()
           if Self.audioExtensions.contains(ext) {
-            if let dst = self.copyAudioFile(url, into: destDir, fm: fm) {
+            if let dst = self.copyAudioFile(url, into: targetLibDir, fm: fm) {
               copied.append(dst.path)
             }
           }
         }
       }
 
+      if copied.isEmpty {
+        try? fm.removeItem(at: targetLibDir)
+      }
+
       DispatchQueue.main.async {
-        invoke.resolve(PickFilesResult(copiedPaths: copied, canceled: false))
+        invoke.resolve(PickFilesResult(
+          copiedPaths: copied,
+          importedDir: copied.isEmpty ? nil : targetLibDir.path,
+          canceled: false
+        ))
       }
     }
   }
@@ -777,7 +826,7 @@ extension CarminiumAudioPlugin: UIDocumentPickerDelegate {
     guard let invoke = pendingPickInvoke else { return }
     pendingPickInvoke = nil
     pendingPickDestination = nil
-    invoke.resolve(PickFilesResult(copiedPaths: [], canceled: true))
+    invoke.resolve(PickFilesResult(copiedPaths: [], importedDir: nil, canceled: true))
   }
 
   private func copyAudioFile(_ source: URL, into destDir: URL, fm: FileManager) -> URL? {

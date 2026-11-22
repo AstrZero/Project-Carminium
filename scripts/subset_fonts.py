@@ -40,8 +40,8 @@ PATTERNS = [
     re.compile(r'material-symbols-rounded[^>]*>\s*([a-z][a-z0-9_]*)\s*<'),
     # 动态赋值：el.textContent = 'icon_name'
     re.compile(r"""textContent\s*=\s*'([a-z][a-z0-9_]*)'"""),
-    # 配置项：icon: 'icon_name'
-    re.compile(r"""icon:\s*'([a-z][a-z0-9_]*)'"""),
+    # 配置项：icon: 'icon_name' / buttonIcon: 'icon_name'
+    re.compile(r"""(?:buttonI|i)con:\s*'([a-z][a-z0-9_]*)'"""),
     # squeezeIcon(el, 'icon_name')
     re.compile(r"""squeezeIcon\([^,]+,\s*'([a-z][a-z0-9_]*)'"""),
 ]
@@ -64,11 +64,13 @@ EXTRAS = {
     'bug_report', 'open_in_new', 'create_new_folder',
     'chevron_right', 'arrow_back', 'arrow_forward', 'arrow_drop_down',
     'expand_more', 'expand_less', 'fullscreen', 'crop_free',
-    'picture_in_picture', 'dock_to_right', 'horizontal_rule',
+    'picture_in_picture', 'dock_to_right', 'dock_to_bottom', 'horizontal_rule',
     'audio_file', 'library_music', 'abc', 'blur_on', 'format_size',
     'format_align_center', 'schedule', 'auto_awesome', 'album',
     'person', 'lyrics', 'skip_previous', 'skip_next', 'check_circle',
     'progress_activity', 'api', 'play_circle',
+    # iOS 专属图标（底栏更多、AirPlay、本地音频导入）
+    'more_horiz', 'more_vert', 'airplay', 'upload_file',
     # 设置页 M3E list-item leading icon（ROW_ICONS 映射，提取器抓不到 key: 'name' 形式）
     'contrast', 'wallpaper', 'text_fields', 'movie', 'view_agenda',
     'speaker', 'equalizer', 'piano', 'compress', 'hearing', 'mic',

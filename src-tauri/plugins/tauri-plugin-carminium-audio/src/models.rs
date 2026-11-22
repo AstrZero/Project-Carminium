@@ -57,6 +57,7 @@ pub struct PickFilesRequest {
 #[serde(rename_all = "camelCase")]
 pub struct PickFilesResponse {
     pub copied_paths: Vec<String>,
+    pub imported_dir: Option<String>,
     pub canceled: bool,
 }
 

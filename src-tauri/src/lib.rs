@@ -100,16 +100,23 @@ pub fn run() {
                 .path()
                 .app_cache_dir()
                 .unwrap_or_else(|_| std::env::temp_dir().join("carminium_cache"));
-            // On iOS, document_dir() maps to the Files.app-visible App Documents directory
+            // On iOS:
+            // - `doc_dir` (`Documents/`) is the public Files.app-visible library folder
+            //   ("我的 iPhone → Project Carminium"); creating `Music/` inside guarantees
+            //   the folder appears in Files.app immediately on first launch.
+            // - `private_libraries_dir` (`Application Support/.../libraries/`) stores
+            //   additional imported libraries privately outside Files.app.
             let doc_dir = app
                 .path()
                 .document_dir()
                 .unwrap_or_else(|_| data_dir.clone());
-            let music_dir = doc_dir.join("Music");
+            let public_music_dir = doc_dir.join("Music");
+            let private_libraries_dir = data_dir.join("libraries");
 
             let _ = fs::create_dir_all(&data_dir);
             let _ = fs::create_dir_all(&cache_dir);
-            let _ = fs::create_dir_all(&music_dir);
+            let _ = fs::create_dir_all(&public_music_dir);
+            let _ = fs::create_dir_all(&private_libraries_dir);
 
             let db = Arc::new(
                 LibraryDb::open(&data_dir, &cache_dir).unwrap_or_else(|e| {
@@ -126,7 +133,8 @@ pub fn run() {
                 data_dir,
                 cache_dir,
                 doc_dir: doc_dir.clone(),
-                music_dir: music_dir.clone(),
+                music_dir: public_music_dir,
+                private_libraries_dir,
             });
 
             app.manage(db.clone());
