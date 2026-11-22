@@ -112,8 +112,13 @@ pub fn run() {
             let _ = fs::create_dir_all(&music_dir);
 
             let db = Arc::new(
-                LibraryDb::open(&data_dir, &cache_dir)
-                    .expect("failed to initialize Carminium SQLite library"),
+                LibraryDb::open(&data_dir, &cache_dir).unwrap_or_else(|e| {
+                    log::error!("primary LibraryDb::open failed: {e}, falling back to temp dir");
+                    let fb_data = std::env::temp_dir().join("carminium_data_fb");
+                    let fb_cache = std::env::temp_dir().join("carminium_cache_fb");
+                    LibraryDb::open(&fb_data, &fb_cache)
+                        .expect("failed to initialize fallback Carminium SQLite library")
+                }),
             );
             let app_settings = Arc::new(AppSettings::load(&data_dir));
             let player_state = Arc::new(PlayerState::new(&app_settings));
@@ -129,7 +134,9 @@ pub fn run() {
             app.manage(player_state.clone());
             app.manage(app_paths);
 
-            // Bind Swift AVPlayer native events -> Rust PlayerState via Tauri Channel
+            // Bind Swift AVPlayer native events -> Rust PlayerState via Tauri Channel.
+            // `set_event_channel` dispatches asynchronously over a FIFO channel so it
+            // NEVER blocks the iOS Main Thread during `setup()`.
             let app_handle = app.handle().clone();
             let db_for_events = db.clone();
             let player_for_events = player_state.clone();
@@ -145,16 +152,20 @@ pub fn run() {
                 log::warn!("failed to bind native iOS audio channel: {e}");
             }
 
-            // Scan Files.app-shared Documents directory on startup in background
+            // Scan Files.app-shared Documents directory in background after UI first paint
             let scan_app = app.handle().clone();
             let scan_db = db.clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                let _ = scanner::scan_local_folder(&scan_db, &doc_dir);
-                let folders_json =
-                    serde_json::to_string(&scan_db.get_folders().unwrap_or_default())
-                        .unwrap_or_else(|_| "[]".to_string());
-                emit_bridge(&scan_app, "folders_updated", serde_json::json!(folders_json));
-                emit_bridge(&scan_app, "library_updated", serde_json::json!(""));
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    let _ = scanner::scan_local_folder(&scan_db, &doc_dir);
+                    let folders_json =
+                        serde_json::to_string(&scan_db.get_folders().unwrap_or_default())
+                            .unwrap_or_else(|_| "[]".to_string());
+                    emit_bridge(&scan_app, "folders_updated", serde_json::json!(folders_json));
+                    emit_bridge(&scan_app, "library_updated", serde_json::json!(""));
+                })
+                .await;
             });
 
             Ok(())

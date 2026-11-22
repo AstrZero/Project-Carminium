@@ -129,11 +129,21 @@ class CarminiumAudioPlugin: Plugin {
     NotificationCenter.default.removeObserver(self)
   }
 
+  // MARK: - Main-thread helper (never deadlocks if already on Main Thread)
+
+  private func runOnMain(_ block: @escaping () -> Void) {
+    if Thread.isMainThread {
+      block()
+    } else {
+      DispatchQueue.main.async(execute: block)
+    }
+  }
+
   // MARK: - Tauri Commands
 
   @objc public func setEventChannel(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(SetChannelArgs.self)
-    DispatchQueue.main.async {
+    runOnMain {
       self.eventChannel = args.channel
       invoke.resolve()
     }
@@ -141,14 +151,14 @@ class CarminiumAudioPlugin: Plugin {
 
   @objc public func play(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(PlayArgs.self)
-    DispatchQueue.main.async {
+    runOnMain {
       self.handlePlay(args)
       invoke.resolve()
     }
   }
 
   @objc public func pause(_ invoke: Invoke) {
-    DispatchQueue.main.async {
+    runOnMain {
       self.player?.pause()
       self.isPlayingState = false
       self.updateNowPlayingPlaybackState(isPlaying: false)
@@ -159,7 +169,7 @@ class CarminiumAudioPlugin: Plugin {
   }
 
   @objc public func resume(_ invoke: Invoke) {
-    DispatchQueue.main.async {
+    runOnMain {
       guard let player = self.player, player.currentItem != nil else {
         invoke.resolve()
         return
@@ -177,7 +187,7 @@ class CarminiumAudioPlugin: Plugin {
   }
 
   @objc public func stop(_ invoke: Invoke) {
-    DispatchQueue.main.async {
+    runOnMain {
       self.cleanupPlayerObservers()
       self.player?.pause()
       self.player?.replaceCurrentItem(with: nil)
@@ -193,7 +203,7 @@ class CarminiumAudioPlugin: Plugin {
 
   @objc public func seek(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(SeekArgs.self)
-    DispatchQueue.main.async {
+    runOnMain {
       self.performSeek(positionMs: args.positionMs)
       invoke.resolve()
     }
@@ -201,7 +211,7 @@ class CarminiumAudioPlugin: Plugin {
 
   @objc public func setVolume(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(VolumeArgs.self)
-    DispatchQueue.main.async {
+    runOnMain {
       self.volumeLevel = max(0.0, min(1.0, args.level))
       self.player?.volume = self.volumeLevel
       invoke.resolve()
@@ -210,7 +220,7 @@ class CarminiumAudioPlugin: Plugin {
 
   @objc public func setRate(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(RateArgs.self)
-    DispatchQueue.main.async {
+    runOnMain {
       let clamped = max(0.5, min(2.0, args.rate))
       self.playbackRate = clamped
       if self.isPlayingState {
@@ -223,7 +233,7 @@ class CarminiumAudioPlugin: Plugin {
 
   @objc public func updateMetadata(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(TrackMetadataArgs.self)
-    DispatchQueue.main.async {
+    runOnMain {
       self.currentMetadata = args
       if let d = args.durationMs, d > 0 {
         self.currentDurationMs = d
@@ -248,7 +258,7 @@ class CarminiumAudioPlugin: Plugin {
 
   @objc public func openAirPlay(_ invoke: Invoke) {
     #if os(iOS)
-    DispatchQueue.main.async {
+    runOnMain {
       guard let vc = self.resolveTopViewController() else {
         invoke.reject("No presenting view controller available")
         return
@@ -282,7 +292,7 @@ class CarminiumAudioPlugin: Plugin {
   @objc public func pickAudioFiles(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(PickFilesArgs.self)
     #if os(iOS)
-    DispatchQueue.main.async {
+    runOnMain {
       guard let vc = self.resolveTopViewController() else {
         invoke.resolve(PickFilesResult(copiedPaths: [], canceled: true))
         return

@@ -138,13 +138,28 @@
     };
 
     if (tauriEvent && typeof tauriEvent.listen === 'function') {
-      tauriEvent.listen('bridge:event', function (evt) {
-        const data = evt && evt.payload;
-        if (data && data.event) {
-          window.__bridge.dispatch(data.event, data.payload);
-        }
+      Promise.resolve(
+        tauriEvent.listen('bridge:event', function (evt) {
+          const data = evt && evt.payload;
+          if (data && data.event) {
+            window.__bridge.dispatch(data.event, data.payload);
+          }
+        })
+      ).catch(function (e) {
+        console.warn('[bridge] event.listen failed:', e);
       });
     }
+
+    // Surface any fatal boot JS error on #splash so iOS testing never gets a silent blank screen
+    window.addEventListener('error', function (ev) {
+      var splash = document.getElementById('splash');
+      if (splash && ev && ev.message) {
+        var errBox = document.createElement('p');
+        errBox.style.cssText = 'font-size:12px;color:#ffb4ab;margin-top:8px;padding:0 16px;word-break:break-word;text-align:center;';
+        errBox.textContent = 'JS Error: ' + ev.message;
+        splash.appendChild(errBox);
+      }
+    });
 
     // Zero-polling Tauri v2 Channel for native AVPlayer position ticks
     if (tauriInvoke && tauriCore && typeof tauriCore.Channel === 'function') {
