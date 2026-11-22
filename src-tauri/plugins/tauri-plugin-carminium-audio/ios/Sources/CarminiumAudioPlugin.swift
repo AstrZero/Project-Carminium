@@ -56,6 +56,20 @@ private struct PickFilesResult: Encodable {
   let canceled: Bool
 }
 
+private struct HttpFetchArgs: Decodable {
+  let url: String
+  let method: String?
+  let headers: [String: String]?
+  let body: String?
+  let timeoutSecs: Double?
+}
+
+private struct HttpFetchResult: Encodable {
+  let status: Int
+  let body: String
+  let error: String?
+}
+
 private struct TickEvent: Encodable {
   var type: String = "tick"
   let positionMs: Double
@@ -93,10 +107,12 @@ private struct ErrorEvent: Encodable {
 class CarminiumAudioPlugin: Plugin {
   private var player: AVPlayer?
   private var timeObserver: Any?
+  private var timeControlObservation: NSKeyValueObservation?
   private var endObserver: NSObjectProtocol?
   private var failObserver: NSObjectProtocol?
   private var statusObservation: NSKeyValueObservation?
   private var eventChannel: Channel?
+  private var nowPlayingSessionStorage: AnyObject?
 
   private var currentTrackId: String = ""
   private var currentMetadata: TrackMetadataArgs?
@@ -135,6 +151,8 @@ class CarminiumAudioPlugin: Plugin {
 
   deinit {
     cleanupPlayerObservers()
+    timeControlObservation?.invalidate()
+    timeControlObservation = nil
     if let obs = timeObserver {
       player?.removeTimeObserver(obs)
       timeObserver = nil
@@ -208,8 +226,9 @@ class CarminiumAudioPlugin: Plugin {
       self.currentTrackId = ""
       self.currentMetadata = nil
       self.currentDurationMs = 0
-      MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-      MPNowPlayingInfoCenter.default().playbackState = .stopped
+      let center = self.activeNowPlayingInfoCenter()
+      center.nowPlayingInfo = nil
+      center.playbackState = .stopped
       self.sendStateEvent("stopped")
       invoke.resolve()
     }
@@ -328,13 +347,49 @@ class CarminiumAudioPlugin: Plugin {
     #endif
   }
 
+  @objc public func httpFetch(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(HttpFetchArgs.self)
+    guard let url = URL(string: args.url) else {
+      invoke.resolve(HttpFetchResult(status: 0, body: "", error: "invalid url"))
+      return
+    }
+    var req = URLRequest(url: url)
+    req.httpMethod = (args.method ?? "GET").uppercased()
+    req.timeoutInterval = args.timeoutSecs ?? 12.0
+    req.cachePolicy = .reloadIgnoringLocalCacheData
+    if let headers = args.headers {
+      for (k, v) in headers {
+        req.setValue(v, forHTTPHeaderField: k)
+      }
+    }
+    if let bodyStr = args.body {
+      req.httpBody = bodyStr.data(using: .utf8)
+    }
+    let task = URLSession.shared.dataTask(with: req) { data, response, error in
+      if let err = error {
+        invoke.resolve(HttpFetchResult(status: 0, body: "", error: err.localizedDescription))
+        return
+      }
+      let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+      let text: String
+      if let d = data {
+        text = String(data: d, encoding: .utf8)
+          ?? String(data: d, encoding: .isoLatin1)
+          ?? ""
+      } else {
+        text = ""
+      }
+      invoke.resolve(HttpFetchResult(status: statusCode, body: text, error: nil))
+    }
+    task.resume()
+  }
+
   // MARK: - Core AVPlayer Logic
 
   private func handlePlay(_ args: PlayArgs) {
     #if os(iOS)
     ensureAudioSessionActive()
     #endif
-    ensureRemoteCommandsConfigured()
 
     guard let mediaURL = resolveURL(args.url) else {
       sendErrorEvent("Invalid audio URL: \(args.url)", trackId: args.metadata.trackId)
@@ -357,14 +412,32 @@ class CarminiumAudioPlugin: Plugin {
       let p = AVPlayer(playerItem: item)
       p.automaticallyWaitsToMinimizeStalling = true
       p.allowsExternalPlayback = false
+      p.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
       p.volume = self.volumeLevel
       self.player = p
       installPeriodicTimeObserver(on: p)
+      installTimeControlObserver(on: p)
+      #if os(iOS)
+      if #available(iOS 16.0, *) {
+        let npSession = MPNowPlayingSession(players: [p])
+        npSession.automaticallyPublishesNowPlayingInfo = false
+        self.nowPlayingSessionStorage = npSession
+        npSession.becomeActiveIfPossible { _ in }
+      }
+      #endif
     } else {
       self.player?.replaceCurrentItem(with: item)
       self.player?.allowsExternalPlayback = false
+      self.player?.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
       self.player?.volume = self.volumeLevel
+      #if os(iOS)
+      if #available(iOS 16.0, *), let npSession = self.nowPlayingSessionStorage as? MPNowPlayingSession {
+        npSession.becomeActiveIfPossible { _ in }
+      }
+      #endif
     }
+
+    ensureRemoteCommandsConfigured()
 
     self.currentTrackId = args.metadata.trackId
     self.currentMetadata = args.metadata
@@ -469,6 +542,37 @@ class CarminiumAudioPlugin: Plugin {
     }
   }
 
+  private func installTimeControlObserver(on player: AVPlayer) {
+    timeControlObservation?.invalidate()
+    timeControlObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] observedPlayer, _ in
+      DispatchQueue.main.async {
+        guard let self = self, self.player === observedPlayer, !self.currentTrackId.isEmpty else {
+          return
+        }
+        switch observedPlayer.timeControlStatus {
+        case .playing:
+          if !self.isPlayingState {
+            self.isPlayingState = true
+            self.updateNowPlayingPlaybackState(isPlaying: true)
+            self.sendStateEvent("playing")
+            self.sendTickEvent()
+          }
+        case .paused:
+          if self.isPlayingState {
+            self.isPlayingState = false
+            self.updateNowPlayingPlaybackState(isPlaying: false)
+            self.sendStateEvent("paused")
+            self.sendTickEvent()
+          }
+        case .waitingToPlayAtSpecifiedRate:
+          break
+        @unknown default:
+          break
+        }
+      }
+    }
+  }
+
   private func cleanupPlayerObservers() {
     statusObservation?.invalidate()
     statusObservation = nil
@@ -509,16 +613,7 @@ class CarminiumAudioPlugin: Plugin {
     let session = AVAudioSession.sharedInstance()
     do {
       if !audioSessionConfigured {
-        do {
-          try session.setCategory(
-            .playback,
-            mode: .default,
-            policy: .longFormAudio,
-            options: []
-          )
-        } catch {
-          try session.setCategory(.playback, mode: .default, options: [])
-        }
+        try session.setCategory(.playback, mode: .default, options: [])
         audioSessionConfigured = true
       }
       try session.setActive(true)
@@ -611,7 +706,55 @@ class CarminiumAudioPlugin: Plugin {
   }
   #endif
 
-  // MARK: - MPNowPlayingInfoCenter & MPRemoteCommandCenter
+  // MARK: - MPNowPlayingSession / MPNowPlayingInfoCenter & MPRemoteCommandCenter
+
+  private func activeNowPlayingInfoCenter() -> MPNowPlayingInfoCenter {
+    #if os(iOS)
+    if #available(iOS 16.0, *), let npSession = self.nowPlayingSessionStorage as? MPNowPlayingSession {
+      return npSession.nowPlayingInfoCenter
+    }
+    #endif
+    return MPNowPlayingInfoCenter.default()
+  }
+
+  private func activeRemoteCommandCenter() -> MPRemoteCommandCenter {
+    #if os(iOS)
+    if #available(iOS 16.0, *), let npSession = self.nowPlayingSessionStorage as? MPNowPlayingSession {
+      return npSession.remoteCommandCenter
+    }
+    #endif
+    return MPRemoteCommandCenter.shared()
+  }
+
+  private func performImmediatePause() {
+    guard self.player != nil else {
+      self.sendRemoteEvent(action: "pause", positionMs: nil)
+      return
+    }
+    self.player?.pause()
+    self.isPlayingState = false
+    self.updateNowPlayingPlaybackState(isPlaying: false)
+    self.sendStateEvent("paused")
+    self.sendTickEvent()
+  }
+
+  private func performImmediateResume() {
+    guard let player = self.player, player.currentItem != nil else {
+      self.sendRemoteEvent(action: "play", positionMs: nil)
+      return
+    }
+    #if os(iOS)
+    self.ensureAudioSessionActive()
+    if #available(iOS 16.0, *), let npSession = self.nowPlayingSessionStorage as? MPNowPlayingSession {
+      npSession.becomeActiveIfPossible { _ in }
+    }
+    #endif
+    player.playImmediately(atRate: self.playbackRate)
+    self.isPlayingState = true
+    self.updateNowPlayingPlaybackState(isPlaying: true)
+    self.sendStateEvent("playing")
+    self.sendTickEvent()
+  }
 
   private func ensureRemoteCommandsConfigured() {
     if remoteCommandsConfigured { return }
@@ -621,26 +764,37 @@ class CarminiumAudioPlugin: Plugin {
     UIApplication.shared.beginReceivingRemoteControlEvents()
     #endif
 
-    let cc = MPRemoteCommandCenter.shared()
+    let cc = activeRemoteCommandCenter()
 
     cc.playCommand.isEnabled = true
     cc.playCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
-      self.sendRemoteEvent(action: "play", positionMs: nil)
+      self.runOnMain {
+        self.performImmediateResume()
+      }
       return .success
     }
 
     cc.pauseCommand.isEnabled = true
     cc.pauseCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
-      self.sendRemoteEvent(action: "pause", positionMs: nil)
+      self.runOnMain {
+        self.performImmediatePause()
+      }
       return .success
     }
 
     cc.togglePlayPauseCommand.isEnabled = true
     cc.togglePlayPauseCommand.addTarget { [weak self] _ in
       guard let self = self else { return .commandFailed }
-      self.sendRemoteEvent(action: self.isPlayingState ? "pause" : "play", positionMs: nil)
+      self.runOnMain {
+        let currentlyPlaying = (self.player?.timeControlStatus == .playing) || self.isPlayingState
+        if currentlyPlaying {
+          self.performImmediatePause()
+        } else {
+          self.performImmediateResume()
+        }
+      }
       return .success
     }
 
@@ -665,14 +819,17 @@ class CarminiumAudioPlugin: Plugin {
         let posEvent = event as? MPChangePlaybackPositionCommandEvent
       else { return .commandFailed }
       let ms = max(0.0, posEvent.positionTime * 1000.0)
-      self.performSeek(positionMs: ms)
-      self.sendRemoteEvent(action: "seek", positionMs: ms)
+      self.runOnMain {
+        self.performSeek(positionMs: ms)
+        self.sendRemoteEvent(action: "seek", positionMs: ms)
+      }
       return .success
     }
   }
 
   private func applyNowPlayingInfo(metadata: TrackMetadataArgs, isPlaying: Bool) {
-    var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [String: Any]()
+    let center = activeNowPlayingInfoCenter()
+    var info = center.nowPlayingInfo ?? [String: Any]()
     info[MPMediaItemPropertyTitle] = metadata.title
     info[MPMediaItemPropertyArtist] = metadata.artist
     info[MPMediaItemPropertyAlbumTitle] = metadata.album
@@ -698,13 +855,12 @@ class CarminiumAudioPlugin: Plugin {
     }
     #endif
 
-    let center = MPNowPlayingInfoCenter.default()
     center.nowPlayingInfo = info
     center.playbackState = isPlaying ? .playing : .paused
   }
 
   private func updateNowPlayingPlaybackState(isPlaying: Bool, overrideElapsedSec: Double? = nil) {
-    let center = MPNowPlayingInfoCenter.default()
+    let center = activeNowPlayingInfoCenter()
     guard var info = center.nowPlayingInfo else {
       center.playbackState = isPlaying ? .playing : .paused
       return

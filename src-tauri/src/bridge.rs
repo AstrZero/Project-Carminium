@@ -657,21 +657,21 @@ pub async fn dispatch_bridge<R: Runtime>(
         // ── Lyrics ──────────────────────────────────────────────────
         "search_netease_lyrics" => {
             let q = arg_str(&args, 0);
-            dump(&lyrics::search_lyrics(&q, "ncm").await)
+            dump(&lyrics::search_lyrics(&app, &q, "ncm").await)
         }
         "fetch_netease_lyrics" => {
             let id = arg_str(&args, 0);
-            dump(&lyrics::fetch_lyrics_by_id(&id, "ncm").await)
+            dump(&lyrics::fetch_lyrics_by_id(&app, &id, "ncm").await)
         }
         "search_lyrics" => {
             let q = arg_str(&args, 0);
             let src = arg_str(&args, 1);
-            dump(&lyrics::search_lyrics(&q, &src).await)
+            dump(&lyrics::search_lyrics(&app, &q, &src).await)
         }
         "fetch_lyrics" => {
             let id = arg_str(&args, 0);
             let src = arg_str(&args, 1);
-            dump(&lyrics::fetch_lyrics_by_id(&id, &src).await)
+            dump(&lyrics::fetch_lyrics_by_id(&app, &id, &src).await)
         }
         "get_subsonic_lyrics" => {
             let tid = arg_str(&args, 0);

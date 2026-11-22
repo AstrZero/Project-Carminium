@@ -59,7 +59,19 @@ impl<R: Runtime> CarminiumAudio<R> {
     ) -> crate::Result<PickFilesResponse> {
         Ok(PickFilesResponse {
             copied_paths: Vec::new(),
+            imported_dir: None,
             canceled: true,
+        })
+    }
+
+    pub async fn http_fetch(
+        &self,
+        _payload: HttpFetchRequest,
+    ) -> crate::Result<HttpFetchResponse> {
+        Ok(HttpFetchResponse {
+            status: 0,
+            body: String::new(),
+            error: Some("desktop_unavailable".to_string()),
         })
     }
 }

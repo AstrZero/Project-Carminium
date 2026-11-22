@@ -61,6 +61,25 @@ pub struct PickFilesResponse {
     pub canceled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpFetchRequest {
+    pub url: String,
+    pub method: String,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    pub body: Option<String>,
+    pub timeout_secs: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpFetchResponse {
+    pub status: u16,
+    pub body: String,
+    pub error: Option<String>,
+}
+
 /// Native playback & system remote events streamed from Swift AVPlayer via Tauri Channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]

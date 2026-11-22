@@ -1,58 +1,139 @@
 use base64::Engine;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
-use std::time::Duration;
+use std::collections::{BTreeMap, HashMap};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Runtime};
+use tauri_plugin_carminium_audio::{CarminiumAudioExt, HttpFetchRequest};
+
+const DESKTOP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
-        .user_agent(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) \
-             AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-        )
+        .user_agent(DESKTOP_UA)
         .build()
         .map_err(|e| e.to_string())
 }
 
-pub async fn search_lyrics(query: &str, source: &str) -> Value {
+async fn fetch_text<R: Runtime>(
+    app: &AppHandle<R>,
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: Option<&str>,
+) -> Result<(u16, String), String> {
+    let mut header_map = HashMap::new();
+    header_map.insert("User-Agent".to_string(), DESKTOP_UA.to_string());
+    for (k, v) in headers {
+        header_map.insert((*k).to_string(), (*v).to_string());
+    }
+
+    // Prefer native iOS URLSession via plugin so China-region iOS wireless-data permission
+    // prompts, system proxies/VPNs, Keychain CAs, and gzip/br decoding work natively.
+    if let Ok(resp) = app
+        .carminium_audio()
+        .http_fetch(HttpFetchRequest {
+            url: url.to_string(),
+            method: method.to_string(),
+            headers: header_map.clone(),
+            body: body.map(|s| s.to_string()),
+            timeout_secs: Some(12.0),
+        })
+        .await
+    {
+        if resp.error.as_deref() != Some("desktop_unavailable") {
+            if let Some(err) = resp.error {
+                return Err(err);
+            }
+            return Ok((resp.status, resp.body));
+        }
+    }
+
+    // Fallback to reqwest (desktop / non-iOS)
+    let client = http_client()?;
+    let mut req = match method {
+        "POST" => client.post(url),
+        _ => client.get(url),
+    };
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    if let Some(b) = body {
+        req = req.body(b.to_string());
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    Ok((status, text))
+}
+
+fn strip_jsonp(raw: &str) -> &str {
+    let s = raw.trim();
+    if let Some(rest) = s.strip_prefix("callback(") {
+        let end = rest
+            .strip_suffix(");")
+            .or_else(|| rest.strip_suffix(')'))
+            .unwrap_or(rest);
+        return end.trim();
+    }
+    if let Some(rest) = s.strip_prefix("MusicJsonCallback(") {
+        let end = rest
+            .strip_suffix(");")
+            .or_else(|| rest.strip_suffix(')'))
+            .unwrap_or(rest);
+        return end.trim();
+    }
+    s
+}
+
+pub async fn search_lyrics<R: Runtime>(app: &AppHandle<R>, query: &str, source: &str) -> Value {
     let q = query.trim();
     if q.is_empty() {
         return json!({ "songs": [], "error": null });
     }
     match source {
-        "lrclib" => search_lrclib(q).await,
-        "qqmusic" => search_qqmusic(q).await,
-        "amll" => search_ncm(q).await,
-        _ => search_ncm(q).await,
+        "lrclib" => search_lrclib(app, q).await,
+        "qqmusic" => search_qqmusic(app, q).await,
+        "amll" => search_ncm(app, q).await,
+        _ => search_ncm(app, q).await,
     }
 }
 
-pub async fn fetch_lyrics_by_id(song_id: &str, source: &str) -> Value {
+pub async fn fetch_lyrics_by_id<R: Runtime>(
+    app: &AppHandle<R>,
+    song_id: &str,
+    source: &str,
+) -> Value {
     match source {
-        "lrclib" => fetch_lrclib(song_id).await,
-        "qqmusic" => fetch_qqmusic(song_id).await,
-        "amll" => fetch_amll_or_ncm(song_id).await,
-        _ => fetch_ncm(song_id).await,
+        "lrclib" => fetch_lrclib(app, song_id).await,
+        "qqmusic" => fetch_qqmusic(app, song_id).await,
+        "amll" => fetch_amll_or_ncm(app, song_id).await,
+        _ => fetch_ncm(app, song_id).await,
     }
 }
 
 // ── NetEase Cloud Music ─────────────────────────────────────────────
 
-async fn search_ncm(query: &str) -> Value {
-    let Ok(client) = http_client() else {
-        return json!({ "songs": [], "error": "http init failed" });
+async fn search_ncm<R: Runtime>(app: &AppHandle<R>, query: &str) -> Value {
+    let form_body = format!("s={}&type=1&limit=20&offset=0", urlencoding::encode(query));
+    let raw = match fetch_text(
+        app,
+        "POST",
+        "https://music.163.com/api/search/get",
+        &[
+            ("Referer", "https://music.163.com"),
+            ("Content-Type", "application/x-www-form-urlencoded"),
+        ],
+        Some(&form_body),
+    )
+    .await
+    {
+        Ok((_, text)) => text,
+        Err(e) => return json!({ "songs": [], "error": e }),
     };
-    let res = client
-        .post("https://music.163.com/api/search/get")
-        .header("Referer", "https://music.163.com")
-        .form(&[("s", query), ("type", "1"), ("limit", "20"), ("offset", "0")])
-        .send()
-        .await;
-    let Ok(resp) = res else {
-        return json!({ "songs": [], "error": "network error" });
-    };
-    let Ok(data) = resp.json::<Value>().await else {
-        return json!({ "songs": [], "error": "invalid json" });
+    let data: Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => return json!({ "songs": [], "error": format!("parse error: {e}") }),
     };
     let songs: Vec<Value> = data
         .pointer("/result/songs")
@@ -84,24 +165,77 @@ async fn search_ncm(query: &str) -> Value {
     json!({ "songs": songs, "error": null })
 }
 
-async fn fetch_ncm(song_id: &str) -> Value {
-    let Ok(client) = http_client() else {
-        return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": "http init failed" });
-    };
+fn yrc_to_enhanced_lrc(yrc: &str) -> String {
+    let mut out = String::new();
+    for raw_line in yrc.lines() {
+        let line = raw_line.trim();
+        if !line.starts_with('[') {
+            continue;
+        }
+        let Some(end_bracket) = line.find(']') else {
+            continue;
+        };
+        let header = &line[1..end_bracket];
+        let mut parts = header.split(',');
+        let Ok(line_start_ms) = parts.next().unwrap_or("").trim().parse::<i64>() else {
+            continue;
+        };
+        let rest = &line[end_bracket + 1..];
+        let mut buf = format_ts(line_start_ms);
+        let mut cur = rest;
+        let mut any_word = false;
+        while let Some(open_p) = cur.find('(') {
+            let after_open = &cur[open_p + 1..];
+            let Some(close_p) = after_open.find(')') else {
+                break;
+            };
+            let meta = &after_open[..close_p];
+            let after_close = &after_open[close_p + 1..];
+            let next_open = after_close.find('(').unwrap_or(after_close.len());
+            let word = &after_close[..next_open];
+            if let Some(w_start_str) = meta.split(',').next() {
+                if let Ok(w_start) = w_start_str.trim().parse::<i64>() {
+                    let mins = w_start / 60_000;
+                    let secs = (w_start % 60_000) / 1000;
+                    let millis = w_start % 1000;
+                    buf.push_str(&format!("<{mins:02}:{secs:02}.{millis:03}>{word}"));
+                    any_word = true;
+                }
+            }
+            cur = &after_close[next_open..];
+        }
+        if any_word {
+            out.push_str(&buf);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+async fn fetch_ncm<R: Runtime>(app: &AppHandle<R>, song_id: &str) -> Value {
     let url = format!(
         "https://music.163.com/api/song/lyric?id={}&lv=1&kv=1&tv=-1&yv=-1",
         urlencoding::encode(song_id)
     );
-    let Ok(resp) = client
-        .get(&url)
-        .header("Referer", "https://music.163.com")
-        .send()
-        .await
-    else {
-        return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": "network error" });
+    let raw = match fetch_text(
+        app,
+        "GET",
+        &url,
+        &[("Referer", "https://music.163.com")],
+        None,
+    )
+    .await
+    {
+        Ok((_, text)) => text,
+        Err(e) => {
+            return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": e })
+        }
     };
-    let Ok(data) = resp.json::<Value>().await else {
-        return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": "invalid json" });
+    let data: Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": format!("parse error: {e}") })
+        }
     };
     let lrc = data
         .pointer("/lrc/lyric")
@@ -115,8 +249,23 @@ async fn fetch_ncm(song_id: &str) -> Value {
         .pointer("/romalrc/lyric")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let yrclrc = data
+        .pointer("/yrc/lyric")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
-    let combined = combine_lrc(lrc, romalrc, tlyric);
+    let enhanced_yrc = if !yrclrc.trim().is_empty() {
+        yrc_to_enhanced_lrc(yrclrc)
+    } else {
+        String::new()
+    };
+    let original = if !enhanced_yrc.trim().is_empty() {
+        enhanced_yrc.as_str()
+    } else {
+        lrc
+    };
+
+    let combined = combine_lrc(original, romalrc, tlyric);
     json!({
         "lyrics": combined,
         "has_translation": !tlyric.trim().is_empty(),
@@ -125,42 +274,35 @@ async fn fetch_ncm(song_id: &str) -> Value {
     })
 }
 
-async fn fetch_amll_or_ncm(song_id: &str) -> Value {
+async fn fetch_amll_or_ncm<R: Runtime>(app: &AppHandle<R>, song_id: &str) -> Value {
     // Try AMLL TTML DB GitHub mirror by NetEase ID first, fall back to NetEase LRC
-    if let Ok(client) = http_client() {
-        let url = format!(
-            "https://raw.githubusercontent.com/Steve-xmh/amll-ttml-db/main/ncm-lyrics/{song_id}.ttml"
-        );
-        if let Ok(resp) = client.get(&url).send().await {
-            if resp.status().is_success() {
-                if let Ok(text) = resp.text().await {
-                    if !text.trim().is_empty() {
-                        return json!({
-                            "lyrics": text,
-                            "has_translation": text.contains("x-translation"),
-                            "has_romaji": text.contains("x-roman"),
-                            "error": null,
-                        });
-                    }
-                }
-            }
+    let url = format!(
+        "https://raw.githubusercontent.com/Steve-xmh/amll-ttml-db/main/ncm-lyrics/{song_id}.ttml"
+    );
+    if let Ok((status, text)) = fetch_text(app, "GET", &url, &[], None).await {
+        if (200..300).contains(&status) && !text.trim().is_empty() {
+            return json!({
+                "lyrics": text,
+                "has_translation": text.contains("x-translation"),
+                "has_romaji": text.contains("x-roman"),
+                "error": null,
+            });
         }
     }
-    fetch_ncm(song_id).await
+    fetch_ncm(app, song_id).await
 }
 
 // ── LRCLIB ──────────────────────────────────────────────────────────
 
-async fn search_lrclib(query: &str) -> Value {
-    let Ok(client) = http_client() else {
-        return json!({ "songs": [], "error": "http init failed" });
-    };
+async fn search_lrclib<R: Runtime>(app: &AppHandle<R>, query: &str) -> Value {
     let url = format!("https://lrclib.net/api/search?q={}", urlencoding::encode(query));
-    let Ok(resp) = client.get(&url).send().await else {
-        return json!({ "songs": [], "error": "network error" });
+    let raw = match fetch_text(app, "GET", &url, &[], None).await {
+        Ok((_, text)) => text,
+        Err(e) => return json!({ "songs": [], "error": e }),
     };
-    let Ok(list) = resp.json::<Vec<Value>>().await else {
-        return json!({ "songs": [], "error": "invalid json" });
+    let list: Vec<Value> = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => return json!({ "songs": [], "error": format!("parse error: {e}") }),
     };
     let songs: Vec<Value> = list
         .into_iter()
@@ -179,16 +321,19 @@ async fn search_lrclib(query: &str) -> Value {
     json!({ "songs": songs, "error": null })
 }
 
-async fn fetch_lrclib(song_id: &str) -> Value {
-    let Ok(client) = http_client() else {
-        return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": "http init failed" });
-    };
+async fn fetch_lrclib<R: Runtime>(app: &AppHandle<R>, song_id: &str) -> Value {
     let url = format!("https://lrclib.net/api/get/{}", urlencoding::encode(song_id));
-    let Ok(resp) = client.get(&url).send().await else {
-        return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": "network error" });
+    let raw = match fetch_text(app, "GET", &url, &[], None).await {
+        Ok((_, text)) => text,
+        Err(e) => {
+            return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": e })
+        }
     };
-    let Ok(data) = resp.json::<Value>().await else {
-        return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": "invalid json" });
+    let data: Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": format!("parse error: {e}") })
+        }
     };
     let synced = data
         .get("syncedLyrics")
@@ -213,24 +358,18 @@ async fn fetch_lrclib(song_id: &str) -> Value {
 
 // ── QQ Music ────────────────────────────────────────────────────────
 
-async fn search_qqmusic(query: &str) -> Value {
-    let Ok(client) = http_client() else {
-        return json!({ "songs": [], "error": "http init failed" });
-    };
+async fn search_qqmusic<R: Runtime>(app: &AppHandle<R>, query: &str) -> Value {
     let url = format!(
         "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={}&p=1&n=20&format=json",
         urlencoding::encode(query)
     );
-    let Ok(resp) = client
-        .get(&url)
-        .header("Referer", "https://y.qq.com/")
-        .send()
-        .await
-    else {
-        return json!({ "songs": [], "error": "network error" });
+    let raw = match fetch_text(app, "GET", &url, &[("Referer", "https://y.qq.com/")], None).await {
+        Ok((_, text)) => text,
+        Err(e) => return json!({ "songs": [], "error": e }),
     };
-    let Ok(data) = resp.json::<Value>().await else {
-        return json!({ "songs": [], "error": "invalid json" });
+    let data: Value = match serde_json::from_str(strip_jsonp(&raw)) {
+        Ok(v) => v,
+        Err(e) => return json!({ "songs": [], "error": format!("parse error: {e}") }),
     };
     let songs: Vec<Value> = data
         .pointer("/data/song/list")
@@ -262,24 +401,27 @@ async fn search_qqmusic(query: &str) -> Value {
     json!({ "songs": songs, "error": null })
 }
 
-async fn fetch_qqmusic(song_mid: &str) -> Value {
-    let Ok(client) = http_client() else {
-        return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": "http init failed" });
-    };
+async fn fetch_qqmusic<R: Runtime>(app: &AppHandle<R>, song_mid: &str) -> Value {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
     let url = format!(
-        "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={}&format=json&nobase64=0",
-        urlencoding::encode(song_mid)
+        "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={}&format=json&pcachetime={}",
+        urlencoding::encode(song_mid),
+        now_ms
     );
-    let Ok(resp) = client
-        .get(&url)
-        .header("Referer", "https://y.qq.com/")
-        .send()
-        .await
-    else {
-        return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": "network error" });
+    let raw = match fetch_text(app, "GET", &url, &[("Referer", "https://y.qq.com/")], None).await {
+        Ok((_, text)) => text,
+        Err(e) => {
+            return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": e })
+        }
     };
-    let Ok(data) = resp.json::<Value>().await else {
-        return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": "invalid json" });
+    let data: Value = match serde_json::from_str(strip_jsonp(&raw)) {
+        Ok(v) => v,
+        Err(e) => {
+            return json!({ "lyrics": "", "has_translation": false, "has_romaji": false, "error": format!("parse error: {e}") })
+        }
     };
     let decode_b64 = |key: &str| -> String {
         data.get(key)

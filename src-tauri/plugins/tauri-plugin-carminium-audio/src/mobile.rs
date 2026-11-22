@@ -175,4 +175,14 @@ impl<R: Runtime> CarminiumAudio<R> {
             .await
             .map_err(Into::into)
     }
+
+    pub async fn http_fetch(
+        &self,
+        payload: HttpFetchRequest,
+    ) -> crate::Result<HttpFetchResponse> {
+        self.handle
+            .run_mobile_plugin_async("httpFetch", payload)
+            .await
+            .map_err(Into::into)
+    }
 }
