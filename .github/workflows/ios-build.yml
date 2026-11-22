@@ -252,8 +252,36 @@ jobs:
           fi
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$PLIST" || true
 
+          # 6. Declare UIScene lifecycle manifest (matches compiled TaoSceneDelegate in tao 0.37)
+          #    Enables proper SpringBoard foreground suppression, shrink-into-Dynamic-Island, and tap-to-open
+          /usr/libexec/PlistBuddy -c "Delete :UIApplicationSceneManifest" "$PLIST" >/dev/null 2>&1 || true
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UIApplicationSupportsMultipleScenes bool false" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UISceneConfigurations dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0 dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneConfigurationName string Default Configuration" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName string TaoSceneDelegate" "$PLIST"
+
+          # 7. Explicit CFBundleDisplayName (SpringBoard / Dynamic Island / Control Center attribution)
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleDisplayName" "$PLIST" >/dev/null 2>&1 || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Project Carminium" "$PLIST"
+
+          # 8. Register custom URL scheme (carminium://)
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$PLIST" >/dev/null 2>&1 || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleTypeRole string Editor" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.yunofactory.carminium" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string carminium" "$PLIST"
+
           echo "Verified UIBackgroundModes:"
           /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST"
+          echo "Verified UIApplicationSceneManifest:"
+          /usr/libexec/PlistBuddy -c "Print :UIApplicationSceneManifest" "$PLIST"
+          echo "Verified CFBundleDisplayName:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$PLIST"
 
       - name: Rebuild Material Symbols Rounded font subset (official variable font)
         shell: bash
