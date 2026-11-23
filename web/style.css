@@ -187,9 +187,9 @@
   --md-error-container:       #FFDAD6;
   --md-on-error-container:    #410002;
 
-  --md-background:            hsl(from var(--md-primary) h calc(s * 1.45) 90%);
+  --md-background:            #F8F9FC;
   --md-on-background:         #191C20;
-  --md-surface:               hsl(from var(--md-primary) h calc(s * 1.45) 90%);
+  --md-surface:               #F8F9FC;
   --md-on-surface:            #191C20;
   --md-surface-variant:       #DCE4EC;
   --md-on-surface-variant:    #40484F;

@@ -149,15 +149,15 @@
   };
 
   var COLOR_SCHEMES = {
-    tonal_spot: { h1: 0,   h2: 25,  h3: -30, chroma: 'moderate', sScale: 0.65, tScale: 0.72, sMin: 22, tMin: 25, bgSat: { d: 12, l: 14 } },
-    fidelity:   { h1: 0,   h2: 20,  h3: -25, chroma: 'faithful', sScale: 0.80, tScale: 0.88, sMin: 25, tMin: 28, bgSat: { d: 14, l: 16 } },
+    tonal_spot: { h1: 0,   h2: 25,  h3: -30, chroma: 'moderate', sScale: 0.65, tScale: 0.72, sMin: 22, tMin: 25, bgSat: { d: 6,  l: 5 } },
+    fidelity:   { h1: 0,   h2: 20,  h3: -25, chroma: 'faithful', sScale: 0.80, tScale: 0.88, sMin: 25, tMin: 28, bgSat: { d: 7,  l: 6 } },
     monochrome: { h1: 0,   h2: 0,   h3: 0,   chroma: 'mono',     sScale: 0,    tScale: 0,    sMin: 0,  tMin: 0,  bgSat: { d: 0,  l: 0 } },
-    neutral:    { h1: 0,   h2: 0,   h3: 0,   chroma: 'low',      sScale: 0.60, tScale: 0.60, sMin: 3,  tMin: 3,  bgSat: { d: 4,  l: 5 } },
-    vibrant:    { h1: 0,   h2: 25,  h3: -30, chroma: 'high',     sScale: 0.80, tScale: 0.88, sMin: 40, tMin: 35, bgSat: { d: 16, l: 18 } },
-    expressive: { h1: 15,  h2: 50,  h3: -55, chroma: 'high',     sScale: 0.80, tScale: 0.85, sMin: 38, tMin: 35, bgSat: { d: 14, l: 16 } },
-    content:    { h1: 0,   h2: 25,  h3: -30, chroma: 'exact',    sScale: 0.70, tScale: 0.78, sMin: 20, tMin: 20, bgSat: { d: 12, l: 14 } },
-    rainbow:    { h1: 0,   h2: 120, h3: 240, chroma: 'moderate', sScale: 0.80, tScale: 0.80, sMin: 25, tMin: 25, bgSat: { d: 12, l: 14 } },
-    fruit_salad:{ h1: -10, h2: 40,  h3: 80,  chroma: 'high',     sScale: 0.82, tScale: 0.70, sMin: 38, tMin: 32, bgSat: { d: 14, l: 16 } },
+    neutral:    { h1: 0,   h2: 0,   h3: 0,   chroma: 'low',      sScale: 0.60, tScale: 0.60, sMin: 3,  tMin: 3,  bgSat: { d: 2,  l: 2 } },
+    vibrant:    { h1: 0,   h2: 25,  h3: -30, chroma: 'high',     sScale: 0.80, tScale: 0.88, sMin: 40, tMin: 35, bgSat: { d: 8,  l: 7 } },
+    expressive: { h1: 15,  h2: 50,  h3: -55, chroma: 'high',     sScale: 0.80, tScale: 0.85, sMin: 38, tMin: 35, bgSat: { d: 7,  l: 6 } },
+    content:    { h1: 0,   h2: 25,  h3: -30, chroma: 'exact',    sScale: 0.70, tScale: 0.78, sMin: 20, tMin: 20, bgSat: { d: 6,  l: 5 } },
+    rainbow:    { h1: 0,   h2: 120, h3: 240, chroma: 'moderate', sScale: 0.80, tScale: 0.80, sMin: 25, tMin: 25, bgSat: { d: 5,  l: 4 } },
+    fruit_salad:{ h1: -10, h2: 40,  h3: 80,  chroma: 'high',     sScale: 0.82, tScale: 0.70, sMin: 38, tMin: 32, bgSat: { d: 7,  l: 6 } },
   };
 
   utils.COLOR_SCHEMES = COLOR_SCHEMES;
@@ -308,15 +308,15 @@
     var bgSat = isDark ? sc.bgSat.d : sc.bgSat.l;
     root.style.setProperty('--md-background', 'hsl(' + h1 + ', ' + bgSat + '%, ' + (isDark ? 6 : 98) + '%)');
     root.style.setProperty('--md-surface', 'hsl(' + h1 + ', ' + bgSat + '%, ' + (isDark ? 6 : 98) + '%)');
-    root.style.setProperty('--md-surface-dim', 'hsl(' + h1 + ', ' + Math.max(0, bgSat - 2) + '%, ' + (isDark ? 6 : 87) + '%)');
+    root.style.setProperty('--md-surface-dim', 'hsl(' + h1 + ', ' + Math.max(0, bgSat - 1) + '%, ' + (isDark ? 6 : 87) + '%)');
     root.style.setProperty('--md-surface-bright', 'hsl(' + h1 + ', ' + bgSat + '%, ' + (isDark ? 24 : 100) + '%)');
-    root.style.setProperty('--md-surface-container-lowest', 'hsl(' + h1 + ', ' + Math.max(0, bgSat - 4) + '%, ' + (isDark ? 4 : 100) + '%)');
-    root.style.setProperty('--md-surface-container-low', 'hsl(' + h1 + ', ' + Math.max(0, bgSat - 2) + '%, ' + (isDark ? 10 : 96) + '%)');
+    root.style.setProperty('--md-surface-container-lowest', 'hsl(' + h1 + ', ' + Math.max(0, bgSat - 2) + '%, ' + (isDark ? 4 : 100) + '%)');
+    root.style.setProperty('--md-surface-container-low', 'hsl(' + h1 + ', ' + Math.max(0, bgSat - 1) + '%, ' + (isDark ? 10 : 96) + '%)');
     root.style.setProperty('--md-surface-container', 'hsl(' + h1 + ', ' + bgSat + '%, ' + (isDark ? 12 : 93) + '%)');
-    root.style.setProperty('--md-surface-container-high', 'hsl(' + h1 + ', ' + (bgSat + 2) + '%, ' + (isDark ? 17 : 90) + '%)');
-    root.style.setProperty('--md-surface-container-highest', 'hsl(' + h1 + ', ' + (bgSat + 4) + '%, ' + (isDark ? 22 : 88) + '%)');
+    root.style.setProperty('--md-surface-container-high', 'hsl(' + h1 + ', ' + (bgSat + 1) + '%, ' + (isDark ? 17 : 90) + '%)');
+    root.style.setProperty('--md-surface-container-highest', 'hsl(' + h1 + ', ' + (bgSat + 2) + '%, ' + (isDark ? 22 : 88) + '%)');
 
-    root.style.setProperty('--md-outline-variant', 'hsl(' + h1 + ', ' + Math.max(0, bgSat - 2) + '%, ' + (isDark ? 22 : 88) + '%)');
+    root.style.setProperty('--md-outline-variant', 'hsl(' + h1 + ', ' + Math.max(0, bgSat - 1) + '%, ' + (isDark ? 22 : 88) + '%)');
 
     var vdBgSat = sc.bgSat.d;
 
@@ -337,15 +337,15 @@
 
     root.style.setProperty('--md-background-vd', 'hsl(' + h1 + ', ' + vdBgSat + '%, 6%)');
     root.style.setProperty('--md-surface-vd', 'hsl(' + h1 + ', ' + vdBgSat + '%, 6%)');
-    root.style.setProperty('--md-surface-dim-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 2) + '%, 6%)');
+    root.style.setProperty('--md-surface-dim-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 1) + '%, 6%)');
     root.style.setProperty('--md-surface-bright-vd', 'hsl(' + h1 + ', ' + vdBgSat + '%, 24%)');
-    root.style.setProperty('--md-surface-container-lowest-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 4) + '%, 4%)');
-    root.style.setProperty('--md-surface-container-low-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 2) + '%, 10%)');
+    root.style.setProperty('--md-surface-container-lowest-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 2) + '%, 4%)');
+    root.style.setProperty('--md-surface-container-low-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 1) + '%, 10%)');
     root.style.setProperty('--md-surface-container-vd', 'hsl(' + h1 + ', ' + vdBgSat + '%, 12%)');
-    root.style.setProperty('--md-surface-container-high-vd', 'hsl(' + h1 + ', ' + (vdBgSat + 2) + '%, 17%)');
-    root.style.setProperty('--md-surface-container-highest-vd', 'hsl(' + h1 + ', ' + (vdBgSat + 4) + '%, 22%)');
+    root.style.setProperty('--md-surface-container-high-vd', 'hsl(' + h1 + ', ' + (vdBgSat + 1) + '%, 17%)');
+    root.style.setProperty('--md-surface-container-highest-vd', 'hsl(' + h1 + ', ' + (vdBgSat + 2) + '%, 22%)');
 
-    root.style.setProperty('--md-outline-variant-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 2) + '%, 22%)');
+    root.style.setProperty('--md-outline-variant-vd', 'hsl(' + h1 + ', ' + Math.max(0, vdBgSat - 1) + '%, 22%)');
   };
 
 
