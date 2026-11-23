@@ -5802,11 +5802,37 @@ select.cmd-text-field__input + .cmd-text-field__label {
   opacity: 0.3;
   cursor: grab;
   padding: 0;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   transition: opacity var(--motion-short) var(--ease-standard);
   -webkit-app-region: no-drag;
 }
 .np-queue-item:hover .np-queue-drag { opacity: 0.7; }
-.np-queue-drag:active { cursor: grabbing; }
+.np-queue-drag:active { cursor: grabbing; opacity: 0.9; }
+@media (pointer: coarse) {
+  .np-queue-item {
+    grid-template-columns: 32px 40px 1fr auto auto;
+    padding-left: 6px;
+  }
+  .np-queue-drag {
+    width: 32px;
+    opacity: 0.65;
+  }
+}
+.np-queue-drag-ghost {
+  position: fixed;
+  z-index: 10060;
+  pointer-events: none;
+  margin: 0 !important;
+  box-sizing: border-box;
+  border-radius: var(--md-sys-shape-corner-medium) !important;
+  background: var(--md-surface-container-highest) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28), 0 2px 8px rgba(0, 0, 0, 0.16);
+  opacity: 0.96 !important;
+  transform: scale(1.02);
+  will-change: transform;
+}
 .np-queue-drag-icon {
   width: 8px;
   height: 14px;

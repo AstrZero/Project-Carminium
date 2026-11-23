@@ -4037,7 +4037,9 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     el.draggable = false;
 
     const row = document.createElement('div');
-    row.className = 'np-queue-item' + (index === currentIndex ? ' current' : '');
+    row.className = 'np-queue-item'
+      + (index === currentIndex ? ' current' : '')
+      + (index === _touchDragFromIndex ? ' dragging' : '');
     row.dataset.index = index;
     row.draggable = true;
 
@@ -4050,7 +4052,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     }
 
     row.innerHTML = `
-      <button class="np-queue-drag" aria-label="${App.i18n.t('np.dragToReorder') || ''}">
+      <button class="np-queue-drag" type="button" draggable="false" aria-label="${App.i18n.t('np.dragToReorder') || ''}">
         <span class="np-queue-drag-icon"></span>
       </button>
       <div class="np-queue-cover-wrap">${coverHtml}</div>
@@ -4119,6 +4121,7 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
   let _queueCurrentIndex = 0;
   let _queueDelegationBound = false;
   var _draggedQueueItem = null;
+  var _touchDragFromIndex = -1;
 
   function _bindQueueDelegation() {
     if (_queueDelegationBound) return;
@@ -4126,7 +4129,14 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
     if (!list) return;
     _queueDelegationBound = true;
 
+    var touchSuppressClickUntil = 0;
+
     list.addEventListener('click', function (e) {
+      if (Date.now() < touchSuppressClickUntil) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       const item = e.target.closest('.np-queue-item');
       if (!item) return;
       const index = parseInt(item.dataset.index, 10);
@@ -4139,7 +4149,182 @@ if (_videoBg) _videoBg.updatePosition(clampedMs);
       App.backend.play_queue_at(index);
     });
 
+    // Touch / Pen drag-to-reorder via .np-queue-drag (works on mobile & touchscreen PCs)
+    var td = null; // { pointerId, fromIndex, toIndex, ghost, baseTop, offsetY, lastY, rafId }
+
+    function _clearDropIndicators() {
+      list.querySelectorAll('.np-queue-item.drag-over-top, .np-queue-item.drag-over-bottom').forEach(function (it) {
+        it.classList.remove('drag-over-top', 'drag-over-bottom');
+      });
+    }
+
+    function _updateTouchDropTarget(clientY) {
+      if (!td) return;
+      _clearDropIndicators();
+      var items = Array.prototype.slice.call(list.querySelectorAll('.np-queue-item'));
+      if (!items.length) return;
+
+      // Keep source row dimmed even after VirtualList recycles DOM nodes
+      items.forEach(function (it) {
+        var idx = parseInt(it.dataset.index, 10);
+        it.classList.toggle('dragging', idx === td.fromIndex);
+      });
+
+      var chosen = null;
+      var placeAfter = false;
+      var bestDist = Infinity;
+
+      for (var i = 0; i < items.length; i++) {
+        var r = items[i].getBoundingClientRect();
+        if (clientY >= r.top && clientY <= r.bottom) {
+          chosen = items[i];
+          placeAfter = clientY >= (r.top + r.height / 2);
+          break;
+        }
+        var mid = r.top + r.height / 2;
+        var dist = Math.abs(clientY - mid);
+        if (dist < bestDist) {
+          bestDist = dist;
+          chosen = items[i];
+          placeAfter = clientY >= mid;
+        }
+      }
+
+      if (!chosen) return;
+      var targetIdx = parseInt(chosen.dataset.index, 10);
+      if (!isFinite(targetIdx)) return;
+
+      var insertPos = placeAfter ? (targetIdx + 1) : targetIdx;
+      var toIndex = insertPos;
+      if (td.fromIndex < toIndex) toIndex -= 1;
+      toIndex = Math.max(0, Math.min(_queueData.length - 1, toIndex));
+      td.toIndex = toIndex;
+
+      if (targetIdx !== td.fromIndex) {
+        chosen.classList.add(placeAfter ? 'drag-over-bottom' : 'drag-over-top');
+      }
+    }
+
+    function _autoScrollStep() {
+      if (!td) return;
+      var rect = list.getBoundingClientRect();
+      var edge = 56;
+      var speed = 0;
+      if (td.lastY < rect.top + edge) {
+        var topRatio = Math.min(1, Math.max(0, (rect.top + edge - td.lastY) / edge));
+        speed = -Math.ceil(4 + topRatio * 14);
+      } else if (td.lastY > rect.bottom - edge) {
+        var botRatio = Math.min(1, Math.max(0, (td.lastY - (rect.bottom - edge)) / edge));
+        speed = Math.ceil(4 + botRatio * 14);
+      }
+      if (speed !== 0) {
+        var prevTop = list.scrollTop;
+        list.scrollTop = prevTop + speed;
+        if (list.scrollTop !== prevTop) {
+          _updateTouchDropTarget(td.lastY);
+        }
+      }
+      td.rafId = requestAnimationFrame(_autoScrollStep);
+    }
+
+    function _finishTouchDrag(cancelled) {
+      if (!td) return;
+      var state = td;
+      td = null;
+      _touchDragFromIndex = -1;
+      if (state.rafId) cancelAnimationFrame(state.rafId);
+      try { list.releasePointerCapture(state.pointerId); } catch (_) {}
+      window.removeEventListener('pointermove', _onTouchDragMove);
+      window.removeEventListener('pointerup', _onTouchDragUp);
+      window.removeEventListener('pointercancel', _onTouchDragCancel);
+      window.removeEventListener('touchmove', _preventTouchScroll);
+      if (state.ghost && state.ghost.parentNode) {
+        state.ghost.parentNode.removeChild(state.ghost);
+      }
+      _clearDropIndicators();
+      list.querySelectorAll('.np-queue-item.dragging').forEach(function (it) {
+        it.classList.remove('dragging');
+      });
+      touchSuppressClickUntil = Date.now() + 260;
+      if (!cancelled && state.toIndex !== null && state.toIndex !== state.fromIndex) {
+        App.backend.reorder_queue(state.fromIndex, state.toIndex);
+      }
+    }
+
+    function _preventTouchScroll(e) {
+      if (td && e.cancelable) e.preventDefault();
+    }
+
+    function _onTouchDragMove(e) {
+      if (!td || e.pointerId !== td.pointerId) return;
+      if (e.cancelable) e.preventDefault();
+      td.lastY = e.clientY;
+      var dy = e.clientY - td.offsetY - td.baseTop;
+      if (td.ghost) {
+        td.ghost.style.transform = 'translate3d(0, ' + dy.toFixed(1) + 'px, 0) scale(1.02)';
+      }
+      _updateTouchDropTarget(e.clientY);
+    }
+
+    function _onTouchDragUp(e) {
+      if (!td || e.pointerId !== td.pointerId) return;
+      _finishTouchDrag(false);
+    }
+
+    function _onTouchDragCancel(e) {
+      if (!td || e.pointerId !== td.pointerId) return;
+      _finishTouchDrag(true);
+    }
+
+    list.addEventListener('pointerdown', function (e) {
+      if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+      var handle = e.target.closest('.np-queue-drag');
+      if (!handle) return;
+      var item = handle.closest('.np-queue-item');
+      if (!item || !list.contains(item)) return;
+      var fromIndex = parseInt(item.dataset.index, 10);
+      if (!isFinite(fromIndex) || _queueData.length < 2) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (td) _finishTouchDrag(true);
+
+      var rect = item.getBoundingClientRect();
+      var ghost = item.cloneNode(true);
+      ghost.classList.remove('dragging', 'drag-over-top', 'drag-over-bottom');
+      ghost.classList.add('np-queue-drag-ghost');
+      ghost.draggable = false;
+      ghost.style.left = rect.left + 'px';
+      ghost.style.top = rect.top + 'px';
+      ghost.style.width = rect.width + 'px';
+      ghost.style.height = rect.height + 'px';
+      document.body.appendChild(ghost);
+
+      _touchDragFromIndex = fromIndex;
+      item.classList.add('dragging');
+
+      td = {
+        pointerId: e.pointerId,
+        fromIndex: fromIndex,
+        toIndex: fromIndex,
+        ghost: ghost,
+        baseTop: rect.top,
+        offsetY: e.clientY - rect.top,
+        lastY: e.clientY,
+        rafId: 0
+      };
+
+      try { list.setPointerCapture(e.pointerId); } catch (_) {}
+      window.addEventListener('pointermove', _onTouchDragMove, { passive: false });
+      window.addEventListener('pointerup', _onTouchDragUp);
+      window.addEventListener('pointercancel', _onTouchDragCancel);
+      window.addEventListener('touchmove', _preventTouchScroll, { passive: false });
+      td.rafId = requestAnimationFrame(_autoScrollStep);
+    });
+
     list.addEventListener('dragstart', function (e) {
+      if (td) { e.preventDefault(); return; }
       const item = e.target.closest('.np-queue-item');
       if (!item) return;
       _draggedQueueItem = item;

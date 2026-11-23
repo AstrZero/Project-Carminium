@@ -1562,6 +1562,7 @@
       var t = e.touches[0];
       lpStartX = t.clientX;
       lpStartY = t.clientY;
+      if (e.target.closest('.np-queue-drag')) return;
       var target = e.target.closest('.track-row, .album-card, .artist-row, .np-queue-item');
       if (!target) return;
       lpTimer = setTimeout(function () {
