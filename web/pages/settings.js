@@ -2864,20 +2864,30 @@
   }
 
   function _refreshMonetFromSystem() {
-    if (!window.App || !window.__electronAPI || !window.__electronAPI.invoke) {
+    if (!window.App) {
       _monetFallback();
       return;
     }
-    window.__electronAPI.invoke('get_system_accent_color').then(function (rgb) {
+    function _onRgb(rgb) {
+      if (typeof rgb === 'string') {
+        try { rgb = JSON.parse(rgb); } catch (_) { rgb = null; }
+      }
       if (rgb && Array.isArray(rgb) && rgb.length === 3) {
         App.state.currentDominantRgb = rgb;
         App.utils.applyDynamicTheme(rgb, App.state.colorScheme);
       } else {
         _monetFallback();
       }
-    }).catch(function () {
-      _monetFallback();
-    });
+    }
+    if (window.__electronAPI && window.__electronAPI.invoke) {
+      window.__electronAPI.invoke('get_system_accent_color').then(_onRgb).catch(_monetFallback);
+      return;
+    }
+    if (App.utils && typeof App.utils.call === 'function') {
+      App.utils.call('get_system_accent_color').then(_onRgb).catch(_monetFallback);
+      return;
+    }
+    _monetFallback();
   }
 
   function _monetFallback() {

@@ -87,4 +87,8 @@ impl<R: Runtime> CarminiumAudio<R> {
             permission_granted: false,
         })
     }
+
+    pub async fn get_system_accent_color(&self) -> crate::Result<SystemAccentColorResponse> {
+        Ok(SystemAccentColorResponse { rgb: None })
+    }
 }

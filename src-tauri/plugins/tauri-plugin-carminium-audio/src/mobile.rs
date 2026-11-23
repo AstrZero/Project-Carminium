@@ -215,4 +215,18 @@ impl<R: Runtime> CarminiumAudio<R> {
             })
         }
     }
+
+    pub async fn get_system_accent_color(&self) -> crate::Result<SystemAccentColorResponse> {
+        #[cfg(target_os = "android")]
+        {
+            self.handle
+                .run_mobile_plugin_async("getSystemAccentColor", ())
+                .await
+                .map_err(Into::into)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            Ok(SystemAccentColorResponse { rgb: None })
+        }
+    }
 }

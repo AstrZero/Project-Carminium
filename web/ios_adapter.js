@@ -99,6 +99,8 @@
   function _isDesktopOnlyRow(row) {
     if (!row || !row.bind) return false;
     if (DESKTOP_ONLY_BINDS[row.bind]) return true;
+    // iOS does not expose wallpaper accent colors; Android 12+ supports native Material You accent
+    if (row.bind === 'monet_source' && window.__CARMINIUM_MOBILE_OS__ !== 'android') return true;
     if (row.bind.indexOf('taskbar_lyrics') === 0) return true;
     if (row.bind.indexOf('discord_rpc') === 0) return true;
     if (row.bind.indexOf('spatial_') === 0) return true;

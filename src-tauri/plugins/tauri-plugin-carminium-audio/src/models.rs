@@ -95,6 +95,12 @@ pub struct ScanDeviceMusicResponse {
     pub permission_granted: bool,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemAccentColorResponse {
+    pub rgb: Option<[u8; 3]>,
+}
+
 /// Native playback & system remote events streamed from Swift AVPlayer via Tauri Channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]

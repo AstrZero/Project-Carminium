@@ -32,12 +32,8 @@
 
   window.__coverBase = '';
 
-  window.coverUrl = function (trackId, size) {
-    var url = window.__coverBase + '/cover/' + trackId;
-    if (size && size !== 'default' && size !== 'auto') {
-      url += '?size=' + encodeURIComponent(String(size));
-    }
-    return url;
+  window.coverUrl = function (trackId) {
+    return window.__coverBase + '/cover/' + trackId;
   };
 
   // 用户自定义头像后的版本号：改名/换图时递增，用来破 HTTP 缓存

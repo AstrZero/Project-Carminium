@@ -728,6 +728,27 @@ class CarminiumAudioPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    @Command
+    fun getSystemAccentColor(invoke: Invoke) {
+        val ret = JSObject()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                val color = ContextCompat.getColor(activity, android.R.color.system_accent1_500)
+                val arr = JSArray().apply {
+                    put(Color.red(color))
+                    put(Color.green(color))
+                    put(Color.blue(color))
+                }
+                ret.put("rgb", arr)
+                invoke.resolve(ret)
+                return
+            } catch (_: Exception) {
+            }
+        }
+        ret.put("rgb", org.json.JSONObject.NULL)
+        invoke.resolve(ret)
+    }
+
     @Suppress("DEPRECATION")
     private fun readSigningSha256(): String {
         return try {

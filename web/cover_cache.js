@@ -2,22 +2,10 @@
   'use strict';
 
 
-  var COVER_SIZE = 300;
-  var COVER_QUALITY = 0.82;
   var PREFETCH_MARGIN = 4;
   var COVER_POOL_MAX = 96;
   var COLOR_CACHE_MAX = 200;
   var PREFETCH_CONCURRENCY = 3;
-
-  function _isSquareAtTarget(img, size) {
-    if (size === 'max' || size === 'original') return false;
-    var w = img.naturalWidth || img.width;
-    var h = img.naturalHeight || img.height;
-    if (!w || !h) return false;
-    if (w !== h) return false;
-    var target = size || COVER_SIZE;
-    return Math.abs(w - target) <= 1;
-  }
 
 
   var _blobCache = new Map();
@@ -32,21 +20,16 @@
   var _visible = new Set();
   var _reportedColors = new Set();
 
-  function _key(trackId, size) {
-    return String(trackId) + '\u0000' + (size || COVER_SIZE);
+  function _key(trackId) {
+    return String(trackId);
   }
 
   function _isPinned(key) {
-    var pinned = false;
-    _pinned.forEach(function (tid) {
-      if (key.indexOf(tid + '\u0000') === 0) pinned = true;
-    });
-    return pinned;
+    return _pinned.has(key);
   }
 
   function _isVisible(key) {
-    var sep = key.indexOf('\u0000');
-    return sep >= 0 && _visible.has(key.substring(0, sep));
+    return _visible.has(key);
   }
 
 
@@ -84,42 +67,6 @@
     if (entry && entry.blob && entry.url) {
       try { URL.revokeObjectURL(entry.url); } catch (e) {  }
     }
-  }
-
-  function _processImage(img, size) {
-    return new Promise(function (resolve, reject) {
-      try {
-        var iw = img.naturalWidth || img.width;
-        var ih = img.naturalHeight || img.height;
-        if (iw === 0 || ih === 0) {
-          reject(new Error('zero-size image'));
-          return;
-        }
-        var target = size || COVER_SIZE;
-        var eff = (target === 'max') ? Math.max(iw, ih) : Math.min(target, Math.max(iw, ih));
-        var canvas = document.createElement('canvas');
-        canvas.width = eff;
-        canvas.height = eff;
-        var ctx = canvas.getContext('2d', { willReadFrequently: false });
-
-        var scale = Math.max(eff / iw, eff / ih);
-        var sw = eff / scale;
-        var sh = eff / scale;
-        var sx = (iw - sw) / 2;
-        var sy = (ih - sh) / 2;
-        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, eff, eff);
-
-        canvas.toBlob(function (blob) {
-          if (blob) {
-            resolve(blob);
-          } else {
-            reject(new Error('toBlob failed'));
-          }
-        }, 'image/jpeg', COVER_QUALITY);
-      } catch (e) {
-        reject(e);
-      }
-    });
   }
 
   function _extractColors(img) {
@@ -235,13 +182,10 @@
 
     _evict();
 
-    var img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.decoding = 'async';
-    var url = window.coverUrl(trackId, size);
+    var url = window.coverUrl(trackId);
     var done = false;
 
-    img.onload = function () {
+    function _finishWithImg(img, finalUrl, isBlob) {
       if (done) return;
       done = true;
       _loadingQueue.delete(key);
@@ -257,31 +201,51 @@
         }
       }
 
-      if (_isSquareAtTarget(img, size)) {
-        _blobCache.set(key, { url: url, timestamp: _now(), status: 'ready' });
-        _flushCallbacks(key, url);
-        return;
-      }
+      _blobCache.set(key, { url: finalUrl, timestamp: _now(), status: 'ready', blob: !!isBlob });
+      _flushCallbacks(key, finalUrl);
+    }
 
-      _processImage(img, size).then(function (blob) {
-        var blobUrl = URL.createObjectURL(blob);
-        _blobCache.set(key, { url: blobUrl, timestamp: _now(), status: 'ready', blob: true });
-        _flushCallbacks(key, blobUrl);
-      }).catch(function () {
-        _blobCache.set(key, { url: url, timestamp: _now(), status: 'ready' });
-        _flushCallbacks(key, url);
-      });
-    };
-
-    img.onerror = function () {
+    function _fail() {
       if (done) return;
       done = true;
       _loadingQueue.delete(key);
       _blobCache.set(key, { url: null, timestamp: _now(), status: 'no-cover' });
       _flushCallbacks(key, null);
-    };
+    }
 
-    img.src = url;
+    function _loadViaImage(srcUrl, isBlob) {
+      var img = new Image();
+      if (!isBlob) img.crossOrigin = 'anonymous';
+      img.decoding = 'async';
+      img.onload = function () {
+        _finishWithImg(img, srcUrl, isBlob);
+      };
+      img.onerror = function () {
+        if (isBlob) {
+          try { URL.revokeObjectURL(srcUrl); } catch (e) {}
+        }
+        _fail();
+      };
+      img.src = srcUrl;
+    }
+
+    // On mobile (Tauri iOS/Android), custom scheme URLs (carminium://localhost) are cross-origin
+    // to tauri://localhost and can taint <canvas> in WKWebView. Converting to a same-origin blob:
+    // URL keeps Monet color extraction, fluid backgrounds, and card tinting 100% untainted.
+    if (window.__CARMINIUM_MOBILE__ && typeof window.fetch === 'function') {
+      window.fetch(url).then(function (resp) {
+        if (!resp || !resp.ok) throw new Error('cover fetch failed');
+        return resp.blob();
+      }).then(function (blob) {
+        if (!blob || blob.size === 0) throw new Error('empty cover blob');
+        var blobUrl = URL.createObjectURL(blob);
+        _loadViaImage(blobUrl, true);
+      }).catch(function () {
+        _loadViaImage(url, false);
+      });
+    } else {
+      _loadViaImage(url, false);
+    }
   }
 
   function _flushCallbacks(key, url) {
@@ -296,8 +260,11 @@
 
   function _reportColors(trackId, colors) {
     try {
+      var payload = JSON.stringify(colors);
       if (window.__electronAPI && window.__electronAPI.invoke) {
-        window.__electronAPI.invoke('store_cover_colors', trackId, JSON.stringify(colors));
+        window.__electronAPI.invoke('store_cover_colors', trackId, payload);
+      } else if (window.App && App.utils && typeof App.utils.call === 'function') {
+        App.utils.call('store_cover_colors', trackId, payload);
       }
     } catch (e) {  }
   }
@@ -349,6 +316,7 @@
     }
 
     var size = opts.size;
+    imgEl.crossOrigin = 'anonymous';
     imgEl.dataset.coverCache = '1';
 
     var cached = getCached(trackId, size);

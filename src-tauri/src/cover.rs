@@ -11,10 +11,6 @@ pub fn cover_cache_path(cache_dir: &Path, track_id: &str) -> PathBuf {
     cache_dir.join(format!("{track_id}.jpg"))
 }
 
-pub fn cover_sized_path(cache_dir: &Path, track_id: &str, size: u32) -> PathBuf {
-    cache_dir.join(format!("{track_id}_{size}.jpg"))
-}
-
 pub fn save_cover_bytes(cache_dir: &Path, track_id: &str, raw: &[u8]) -> Option<PathBuf> {
     let _ = fs::create_dir_all(cache_dir);
     let dest = cover_cache_path(cache_dir, track_id);
@@ -44,16 +40,9 @@ pub fn save_cover_bytes(cache_dir: &Path, track_id: &str, raw: &[u8]) -> Option<
 pub async fn resolve_cover_bytes(
     db: &LibraryDb,
     track_id: &str,
-    size: Option<u32>,
+    _size: Option<u32>,
 ) -> Option<(Vec<u8>, &'static str)> {
     let base_path = cover_cache_path(&db.cover_cache_dir, track_id);
-
-    if let Some(sz) = size {
-        let sized = cover_sized_path(&db.cover_cache_dir, track_id, sz);
-        if let Ok(bytes) = fs::read(&sized) {
-            return Some((bytes, "image/jpeg"));
-        }
-    }
 
     if !base_path.exists() {
         if let Ok(Some(track)) = db.get_track(track_id) {
@@ -89,18 +78,6 @@ pub async fn resolve_cover_bytes(
     }
 
     let raw = fs::read(&base_path).ok()?;
-    if let Some(sz) = size {
-        let clamped = sz.clamp(64, 1024);
-        if let Ok(img) = image::load_from_memory(&raw) {
-            let thumb = img.thumbnail(clamped, clamped);
-            let mut out = Cursor::new(Vec::new());
-            if thumb.write_to(&mut out, ImageFormat::Jpeg).is_ok() {
-                let bytes = out.into_inner();
-                let _ = fs::write(cover_sized_path(&db.cover_cache_dir, track_id, clamped), &bytes);
-                return Some((bytes, "image/jpeg"));
-            }
-        }
-    }
     Some((raw, "image/jpeg"))
 }
 

@@ -771,6 +771,15 @@ pub async fn dispatch_bridge<R: Runtime>(
             let ids: Vec<String> = serde_json::from_str(&raw).unwrap_or_default();
             dump(&db.get_cover_colors(&ids).unwrap_or_default())
         }
+        "get_system_accent_color" => {
+            let rgb = app
+                .carminium_audio()
+                .get_system_accent_color()
+                .await
+                .ok()
+                .and_then(|r| r.rgb);
+            dump(&rgb)
+        }
         "get_artist_override" => {
             let name = arg_str(&args, 0);
             dump(&db.get_artist_override(&name).unwrap_or_else(|_| json!({})))

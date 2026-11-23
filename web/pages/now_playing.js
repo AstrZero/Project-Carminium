@@ -924,53 +924,82 @@ let _lyricLineEls = null;
     var cached = _bgBlurSourceCache.get(url);
     if (cached) return Promise.resolve(cached);
     return new Promise(function (resolve) {
-      var img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.decoding = 'async';
-      img.onload = function () {
-        try {
-          var nw = img.naturalWidth || img.width;
-          var nh = img.naturalHeight || img.height;
-          var pal = _extractFluidColors(img);
-          if (!nw || !nh) { resolve({ base: url, surge: url, colors: pal }); return; }
-          var scale = Math.min(1, BG_BLUR_SOURCE_MAX / Math.max(nw, nh));
-          var w = Math.max(1, Math.round(nw * scale));
-          var h = Math.max(1, Math.round(nh * scale));
-          var src = document.createElement('canvas');
-          src.width = w;
-          src.height = h;
-          var sctx = src.getContext('2d');
-          if (!sctx) { resolve({ base: url, surge: url, colors: pal }); return; }
-          sctx.imageSmoothingEnabled = true;
-          sctx.imageSmoothingQuality = 'low';
-          sctx.drawImage(img, 0, 0, w, h);
-          var pad = Math.ceil(BG_BAKE_BLUR * 3);
-          function bake(filter) {
-            var c = document.createElement('canvas');
-            c.width = w;
-            c.height = h;
-            var ctx = c.getContext('2d');
-            if (!ctx) return null;
-            ctx.filter = filter;
-            ctx.drawImage(src, -pad, -pad, w + pad * 2, h + pad * 2);
-            return c.toDataURL('image/jpeg', BG_BAKE_JPEG_QUALITY);
+      function _runWithSrc(srcUrl, shouldRevoke) {
+        var img = new Image();
+        if (!shouldRevoke) img.crossOrigin = 'anonymous';
+        img.decoding = 'async';
+        img.onload = function () {
+          try {
+            var nw = img.naturalWidth || img.width;
+            var nh = img.naturalHeight || img.height;
+            var pal = _extractFluidColors(img);
+            if (!nw || !nh) {
+              if (shouldRevoke) { try { URL.revokeObjectURL(srcUrl); } catch (_) {} }
+              resolve({ base: url, surge: url, colors: pal });
+              return;
+            }
+            var scale = Math.min(1, BG_BLUR_SOURCE_MAX / Math.max(nw, nh));
+            var w = Math.max(1, Math.round(nw * scale));
+            var h = Math.max(1, Math.round(nh * scale));
+            var src = document.createElement('canvas');
+            src.width = w;
+            src.height = h;
+            var sctx = src.getContext('2d');
+            if (!sctx) {
+              if (shouldRevoke) { try { URL.revokeObjectURL(srcUrl); } catch (_) {} }
+              resolve({ base: url, surge: url, colors: pal });
+              return;
+            }
+            sctx.imageSmoothingEnabled = true;
+            sctx.imageSmoothingQuality = 'low';
+            sctx.drawImage(img, 0, 0, w, h);
+            var pad = Math.ceil(BG_BAKE_BLUR * 3);
+            function bake(filter) {
+              var c = document.createElement('canvas');
+              c.width = w;
+              c.height = h;
+              var ctx = c.getContext('2d');
+              if (!ctx) return null;
+              ctx.filter = filter;
+              ctx.drawImage(src, -pad, -pad, w + pad * 2, h + pad * 2);
+              return c.toDataURL('image/jpeg', BG_BAKE_JPEG_QUALITY);
+            }
+            var base = bake('blur(' + BG_BAKE_BLUR + 'px) saturate(1.6) brightness(1.05)');
+            var surge = bake('blur(' + BG_BAKE_BLUR + 'px) saturate(2.5) brightness(1.28)');
+            if (shouldRevoke) { try { URL.revokeObjectURL(srcUrl); } catch (_) {} }
+            var result = (base && surge)
+              ? { base: base, surge: surge, colors: pal }
+              : { base: url, surge: url, colors: pal };
+            if (_bgBlurSourceCache.size >= BG_BLUR_CACHE_LIMIT) {
+              _bgBlurSourceCache.delete(_bgBlurSourceCache.keys().next().value);
+            }
+            _bgBlurSourceCache.set(url, result);
+            resolve(result);
+          } catch (e) {
+            if (shouldRevoke) { try { URL.revokeObjectURL(srcUrl); } catch (_) {} }
+            resolve({ base: url, surge: url, colors: null });
           }
-          var base = bake('blur(' + BG_BAKE_BLUR + 'px) saturate(1.6) brightness(1.05)');
-          var surge = bake('blur(' + BG_BAKE_BLUR + 'px) saturate(2.5) brightness(1.28)');
-          var result = (base && surge)
-            ? { base: base, surge: surge, colors: pal }
-            : { base: url, surge: url, colors: pal };
-          if (_bgBlurSourceCache.size >= BG_BLUR_CACHE_LIMIT) {
-            _bgBlurSourceCache.delete(_bgBlurSourceCache.keys().next().value);
-          }
-          _bgBlurSourceCache.set(url, result);
-          resolve(result);
-        } catch (e) {
-          resolve({ base: url, surge: url, colors: null });
-        }
-      };
-      img.onerror = function () { resolve(null); };
-      img.src = url;
+        };
+        img.onerror = function () {
+          if (shouldRevoke) { try { URL.revokeObjectURL(srcUrl); } catch (_) {} }
+          resolve(null);
+        };
+        img.src = srcUrl;
+      }
+
+      if (window.__CARMINIUM_MOBILE__ && url.indexOf('blob:') !== 0 && typeof window.fetch === 'function') {
+        window.fetch(url).then(function (resp) {
+          if (!resp || !resp.ok) throw new Error('bg fetch failed');
+          return resp.blob();
+        }).then(function (blob) {
+          if (!blob || blob.size === 0) throw new Error('empty bg blob');
+          _runWithSrc(URL.createObjectURL(blob), true);
+        }).catch(function () {
+          _runWithSrc(url, false);
+        });
+      } else {
+        _runWithSrc(url, false);
+      }
     });
   }
 
@@ -1658,16 +1687,18 @@ let _lyricLineEls = null;
     els.album.textContent = track.album || '';
     
     if (track.has_cover) {
-      if (!isSameTrack || els.coverImg.style.display === 'none') {
-        els.coverImg.onload = function() {
-          if (App.state.monetSource !== 'system_wallpaper') {
-            const rgb = App.utils.extractDominantColor(els.coverImg);
+      var _applyCoverMonet = function () {
+        if (App.state.monetSource !== 'system_wallpaper') {
+          const rgb = App.utils.extractDominantColor(els.coverImg);
+          if (rgb) {
             App.utils.applyDynamicTheme(rgb);
             App.state.currentDominantRgb = rgb;
-          } else {
           }
-          els.cover.style.background = '';
-        };
+        }
+        els.cover.style.background = '';
+      };
+      if (!isSameTrack || els.coverImg.style.display === 'none') {
+        els.coverImg.onload = _applyCoverMonet;
         els.coverImg.onerror = function() {
           els.coverImg.style.display = 'none';
           els.coverIcon.style.display = '';
@@ -1677,11 +1708,16 @@ let _lyricLineEls = null;
           App.state.currentDominantRgb = null;
           _setBgCover(null, App.utils.hashColor(track.album || track.title));
         };
-        App.utils.loadCover(els.coverImg, track.id, 800);
+        App.utils.loadCover(els.coverImg, track.id);
+        if (els.coverImg.complete && els.coverImg.naturalWidth > 0 && els.coverImg.getAttribute('src')) {
+          _applyCoverMonet();
+        }
+      } else if (!App.state.currentDominantRgb && els.coverImg.complete && els.coverImg.naturalWidth > 0) {
+        _applyCoverMonet();
       }
       els.coverImg.style.display = '';
       els.coverIcon.style.display = 'none';
-      _setBgCover(window.coverUrl ? window.coverUrl(track.id, 384) : null, null);
+      _setBgCover(window.coverUrl ? window.coverUrl(track.id) : null, null);
     } else {
       els.coverImg.style.display = 'none';
       els.coverIcon.style.display = '';

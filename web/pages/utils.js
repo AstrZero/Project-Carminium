@@ -60,6 +60,7 @@
   }
 
   utils.loadCover = function (imgEl, trackId, size) {
+    imgEl.crossOrigin = 'anonymous';
     if (window.CoverCache) {
       var cached = window.CoverCache.getCached(trackId, size);
       if (cached) {
@@ -72,8 +73,7 @@
         onError: function () { imgEl.removeAttribute('src'); },
       });
     } else {
-      imgEl.crossOrigin = 'anonymous';
-      imgEl.src = window.coverUrl(trackId, size);
+      imgEl.src = window.coverUrl(trackId);
     }
   };
 

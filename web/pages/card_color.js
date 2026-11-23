@@ -87,22 +87,40 @@
     if (_pending.has(url)) { _pending.get(url).push(paint); return; }
 
     _pending.set(url, [paint]);
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.decoding = 'async';
-    img.onload = function () {
-      const rgb = extractDominant(img);
-      if (rgb) _cache.set(url, rgb);
-      const cbs = _pending.get(url) || [];
-      _pending.delete(url);
-      cbs.forEach(function (cb) { cb(rgb); });
-    };
-    img.onerror = function () {
-      const cbs = _pending.get(url) || [];
-      _pending.delete(url);
-      cbs.forEach(function (cb) { cb(null); });
-    };
-    img.src = url;
+    function _loadImg(srcUrl, shouldRevoke) {
+      const img = new Image();
+      if (!shouldRevoke) img.crossOrigin = 'anonymous';
+      img.decoding = 'async';
+      img.onload = function () {
+        const rgb = extractDominant(img);
+        if (shouldRevoke) { try { URL.revokeObjectURL(srcUrl); } catch (_) {} }
+        if (rgb) _cache.set(url, rgb);
+        const cbs = _pending.get(url) || [];
+        _pending.delete(url);
+        cbs.forEach(function (cb) { cb(rgb); });
+      };
+      img.onerror = function () {
+        if (shouldRevoke) { try { URL.revokeObjectURL(srcUrl); } catch (_) {} }
+        const cbs = _pending.get(url) || [];
+        _pending.delete(url);
+        cbs.forEach(function (cb) { cb(null); });
+      };
+      img.src = srcUrl;
+    }
+
+    if (window.__CARMINIUM_MOBILE__ && url.indexOf('blob:') !== 0 && typeof window.fetch === 'function') {
+      window.fetch(url).then(function (resp) {
+        if (!resp || !resp.ok) throw new Error('card color fetch failed');
+        return resp.blob();
+      }).then(function (blob) {
+        if (!blob || blob.size === 0) throw new Error('empty card blob');
+        _loadImg(URL.createObjectURL(blob), true);
+      }).catch(function () {
+        _loadImg(url, false);
+      });
+    } else {
+      _loadImg(url, false);
+    }
   }
 
   function tintCards(root, isDark) {
